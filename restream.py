@@ -120,18 +120,61 @@ hr{border:1px solid #0f0;margin:22px 0}
 # ============================================================
 # HTML
 # ============================================================
-HOME_HTML = """
-<!doctype html>
-<html><head>{{style}}</head><body>
+HOME_HTML = """<!doctype html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>IPTV</title>
+
+<style>
+body{
+  background:#000;
+  color:#0f0;
+  font-family:Arial, sans-serif;
+  font-size:24px;
+  padding:14px;
+}
+h2{text-align:center;margin:10px 0}
+.card{
+  border:3px solid #0f0;
+  border-radius:16px;
+  padding:18px;
+  margin-bottom:16px;
+}
+.top-grid{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:14px;
+}
+a,button,input{
+  font-size:24px;
+  padding:16px;
+  border-radius:14px;
+  border:3px solid #0f0;
+  background:black;
+  color:#0f0;
+  text-decoration:none;
+  width:100%;
+  box-sizing:border-box;
+}
+button{cursor:pointer}
+.search{margin-bottom:18px}
+hr{border:1px solid #0f0;margin:22px 0}
+</style>
+</head>
+
+<body>
 
 <h2>📺 IPTV</h2>
 
+<!-- SEARCH -->
 <div class="card search">
 <form action="/search">
 <input name="q" placeholder="🔍 Search channel..." autofocus>
 </form>
 </div>
 
+<!-- TOP BUTTONS -->
 <div class="top-grid">
   <div class="card"><a href="/random">🎲 RANDOM</a></div>
   <div class="card"><a href="/favourites">⭐ FAVOURITES</a></div>
@@ -139,51 +182,106 @@ HOME_HTML = """
 
 <hr>
 
-<h3>📂 CATEGORIES</h3>
+<h3 style="text-align:center">📂 CATEGORIES</h3>
 
-{% for k in playlists %}
+{% for key in playlists %}
 <div class="card">
-  <a href="/list/{{k}}">{{k|upper}}</a>
+  <a href="/list/{{ key }}">{{ key|upper }}</a>
 </div>
 {% endfor %}
 
-</body></html>
+</body>
+</html>
 """
 
-LIST_HTML = """
-<!doctype html>
-<html><head>{{style}}</head><body>
+LIST_HTML = """<!doctype html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{ group|capitalize }}</title>
+
+<style>
+body{
+  background:#000;
+  color:#0f0;
+  font-family:Arial, sans-serif;
+  font-size:22px;
+  padding:14px;
+}
+.card{
+  border:3px solid #0f0;
+  border-radius:16px;
+  padding:16px;
+  margin-bottom:16px;
+}
+a,button,input{
+  font-size:22px;
+  padding:14px;
+  border-radius:12px;
+  border:3px solid #0f0;
+  background:black;
+  color:#0f0;
+  text-decoration:none;
+}
+.btn-row{
+  display:grid;
+  grid-template-columns:1fr 1fr 1fr;
+  gap:10px;
+  margin-top:12px;
+}
+hr{border:1px solid #0f0;margin:20px 0}
+img{
+  width:48px;
+  height:48px;
+  border-radius:8px;
+  background:#222;
+}
+</style>
+</head>
+
+<body>
 
 <a href="/">⬅ BACK</a>
 <hr>
 
+<h3 style="text-align:center">{{ group|upper }}</h3>
+
 {% for ch in channels %}
 <div class="card">
-<b>{{loop.index}}. {{ch.title}}</b>
+  <div style="display:flex;gap:12px;align-items:center">
+    <div style="font-size:22px">{{ loop.index }}.</div>
+    <img src="{{ ch.logo or fallback }}" onerror="this.src='{{ fallback }}'">
+    <div style="flex:1;font-size:22px">{{ ch.title }}</div>
+  </div>
 
-<div class="btn-row">
-<a class="small-btn" href="/watch/{{group}}/{{loop.index0}}">▶ WATCH</a>
-<a class="small-btn" href="/play-144p/{{group}}/{{loop.index0}}">📺 144P</a>
-<a class="small-btn" href="/play-audio/{{group}}/{{loop.index0}}">🎧 AUDIO</a>
-</div>
+  <div class="btn-row">
+    <a href="/watch/{{ group }}/{{ loop.index0 }}">▶ WATCH</a>
+    <a href="/play-audio/{{ group }}/{{ loop.index0 }}">🎧 AUDIO</a>
+    <a href="/stream-noaudio/{{ group }}/{{ loop.index0 }}">🔇 144P</a>
+  </div>
 
-<button class="small-btn" style="margin-top:12px"
-onclick='fav("{{ch.title}}","{{ch.url}}")'>⭐ ADD TO FAV</button>
+  <button style="margin-top:10px"
+   onclick='addFav("{{ ch.title|replace('"','&#34;') }}","{{ ch.url }}","{{ ch.logo }}")'>
+   ⭐ ADD TO FAV
+  </button>
 </div>
 {% endfor %}
 
 <script>
-function fav(t,u){
- let f=JSON.parse(localStorage.getItem("favs")||"[]");
- if(!f.find(x=>x.url==u)){
-  f.push({title:t,url:u});
-  localStorage.setItem("favs",JSON.stringify(f));
-  alert("Added to favourites");
- }
+function addFav(title, url, logo){
+  let f = JSON.parse(localStorage.getItem('favs') || '[]');
+  if(!f.find(x => x.url === url)){
+    f.push({title:title, url:url, logo:logo});
+    localStorage.setItem('favs', JSON.stringify(f));
+    alert("Added to favourites");
+  } else {
+    alert("Already in favourites");
+  }
 }
 </script>
 
-</body></html>
+</body>
+</html>
 """
 
 WATCH_HTML = """
