@@ -1,21 +1,34 @@
 #!/usr/bin/env python3
-import time, random, logging, subprocess, requests
-from flask import Flask, Response, render_template_string, abort, stream_with_context
+import time
+import logging
+import random
+import requests
+import subprocess
+from flask import Flask, Response, render_template_string, abort, stream_with_context, request
 
 # ============================================================
-# BASIC SETUP
+# Basic Setup
 # ============================================================
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s"
+)
+
 app = Flask(__name__)
-logging.basicConfig(level=logging.INFO)
 
 REFRESH_INTERVAL = 1800
+LOGO_FALLBACK = "https://iptv-org.github.io/assets/logo.png"
 
 # ============================================================
 # PLAYLISTS
 # ============================================================
 PLAYLISTS = {
+    "all": "https://iptv-org.github.io/iptv/index.m3u",
     "india": "https://iptv-org.github.io/iptv/countries/in.m3u",
     "news": "https://iptv-org.github.io/iptv/categories/news.m3u",
+    "sports": "https://iptv-org.github.io/iptv/categories/sports.m3u",
+    "malayalam": "https://iptv-org.github.io/iptv/languages/mal.m3u",
+    "english": "https://iptv-org.github.io/iptv/languages/eng.m3u",
 }
 
 CACHE = {}
@@ -23,14 +36,16 @@ CACHE = {}
 # ============================================================
 # M3U PARSER
 # ============================================================
-def parse_m3u(txt):
-    lines = [l.strip() for l in txt.splitlines() if l.strip()]
-    out, i = [], 0
+def parse_m3u(text):
+    lines = [l.strip() for l in text.splitlines() if l.strip()]
+    out = []
+    i = 0
     while i < len(lines):
         if lines[i].startswith("#EXTINF"):
             title = lines[i].split(",", 1)[-1]
-            url = lines[i+1]
-            out.append({"title": title, "url": url})
+            url = lines[i + 1] if i + 1 < len(lines) else None
+            if url and not url.startswith("#"):
+                out.append({"title": title, "url": url})
             i += 2
         else:
             i += 1
@@ -38,156 +53,130 @@ def parse_m3u(txt):
 
 def get_channels(name):
     now = time.time()
-    if name in CACHE and now - CACHE[name]["t"] < REFRESH_INTERVAL:
-        return CACHE[name]["c"]
+    if name in CACHE and now - CACHE[name]["time"] < REFRESH_INTERVAL:
+        return CACHE[name]["channels"]
+
     r = requests.get(PLAYLISTS[name], timeout=20)
     ch = parse_m3u(r.text)
-    CACHE[name] = {"t": now, "c": ch}
+    CACHE[name] = {"time": now, "channels": ch}
     return ch
 
 # ============================================================
-# HTML TEMPLATES
+# VIDEO-ONLY TRANSCODER (40kbps)
 # ============================================================
-HOME_HTML = """
-<!doctype html>
-<html>
-<head>
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>IPTV</title>
-<style>
-body{background:#000;color:#0f0;font-family:monospace}
-a{color:#0ff;text-decoration:none;display:block;padding:6px}
-</style>
-</head>
-<body>
-<h3>Channels</h3>
-{% for i,c in enumerate(channels) %}
-<a href="/watch/{{ group }}/{{ i }}">{{ i }}. {{ c.title }}</a>
-{% endfor %}
-<hr>
-<a href="/random">▶ Random</a>
-</body>
-</html>
-"""
+def proxy_video_no_audio(url):
+    cmd = [
+        "ffmpeg", "-loglevel", "error",
+        "-i", url,
+        "-an",
+        "-vf", "scale=256:-2",
+        "-c:v", "libx264",
+        "-b:v", "40k",
+        "-preset", "ultrafast",
+        "-tune", "zerolatency",
+        "-movflags", "frag_keyframe+empty_moov",
+        "-f", "mp4",
+        "pipe:1"
+    ]
+    p = subprocess.Popen(cmd, stdout=subprocess.PIPE)
+    try:
+        while True:
+            data = p.stdout.read(64 * 1024)
+            if not data:
+                break
+            yield data
+    finally:
+        p.kill()
 
-WATCH_HTML = """
-<!doctype html>
+# ============================================================
+# HTML
+# ============================================================
+WATCH_HTML = """<!doctype html>
 <html>
 <head>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{{ title }}</title>
 <style>
-body{background:#000;color:#0f0;margin:0;text-align:center}
-video{width:100%;max-height:90vh}
+body{background:#000;color:#0f0;margin:0;font-family:Arial}
+video{width:100%;max-height:92vh;border:2px solid #0f0}
 </style>
 </head>
 <body>
-<h4>{{ title }}</h4>
+<h3 style="text-align:center">{{ title }}</h3>
 <video controls autoplay playsinline>
-  <source src="{{ url }}" type="video/mp4">
+  <source src="{{ stream_url }}" type="video/mp4">
 </video>
 </body>
 </html>
 """
 
-# ============================================================
-# 144p NO-AUDIO VIDEO STREAM (USED BY /watch)
-# ============================================================
-@app.route("/video/<group>/<int:idx>")
-def video_144p(group, idx):
-    ch = get_channels(group)
-    if idx >= len(ch):
-        abort(404)
+HOME_HTML = """<!doctype html>
+<html>
+<body style="background:#000;color:#0f0;font-family:Arial">
+<h2>📺 IPTV</h2>
+{% for k in playlists %}
+<a href="/list/{{k}}" style="display:block;color:#0f0;padding:6px">{{k}}</a>
+{% endfor %}
+</body>
+</html>
+"""
 
-    src = ch[idx]["url"]
-
-    cmd = [
-        "ffmpeg","-loglevel","error",
-        "-reconnect","1","-reconnect_streamed","1","-reconnect_delay_max","5",
-        "-i",src,
-        "-an",
-        "-vf","scale=256:144",
-        "-r","15",
-        "-c:v","libx264",
-        "-preset","ultrafast",
-        "-tune","zerolatency",
-        "-b:v","40k","-maxrate","40k","-bufsize","200k",
-        "-movflags","frag_keyframe+empty_moov",
-        "-f","mp4","pipe:1"
-    ]
-
-    def gen():
-        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-        try:
-            while True:
-                d = p.stdout.read(4096)
-                if not d:
-                    break
-                yield d
-        finally:
-            p.terminate()
-
-    return Response(stream_with_context(gen()), mimetype="video/mp4")
-
-# ============================================================
-# AUDIO ONLY (UNCHANGED)
-# ============================================================
-@app.route("/play-audio/<group>/<int:idx>")
-def play_audio(group, idx):
-    ch = get_channels(group)
-    src = ch[idx]["url"]
-
-    cmd = [
-        "ffmpeg","-loglevel","error",
-        "-i",src,
-        "-vn","-ac","1","-ar","22050","-b:a","40k",
-        "-f","mp3","pipe:1"
-    ]
-
-    def gen():
-        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-        try:
-            while True:
-                d = p.stdout.read(4096)
-                if not d:
-                    break
-                yield d
-        finally:
-            p.terminate()
-
-    return Response(stream_with_context(gen()), mimetype="audio/mpeg")
+LIST_HTML = """<!doctype html>
+<html>
+<body style="background:#000;color:#0f0;font-family:Arial">
+<a href="/">← Back</a>
+{% for c in channels %}
+<div style="margin:8px 0">
+  {{loop.index}}. {{c.title}}
+  <a href="/watch/{{group}}/{{loop.index0}}" style="color:#0f0">▶</a>
+</div>
+{% endfor %}
+</body>
+</html>
+"""
 
 # ============================================================
 # ROUTES
 # ============================================================
 @app.route("/")
 def home():
-    ch = get_channels("india")
-    return render_template_string(HOME_HTML, channels=ch, group="india")
+    return render_template_string(HOME_HTML, playlists=PLAYLISTS)
+
+@app.route("/list/<group>")
+def list_group(group):
+    return render_template_string(
+        LIST_HTML,
+        group=group,
+        channels=get_channels(group)
+    )
 
 @app.route("/watch/<group>/<int:idx>")
 def watch(group, idx):
-    ch = get_channels(group)
+    ch = get_channels(group)[idx]
     return render_template_string(
         WATCH_HTML,
-        title=ch[idx]["title"] + " (144p)",
-        url=f"/video/{group}/{idx}"
+        title=ch["title"],
+        stream_url=f"/stream?u={ch['url']}"
     )
 
-@app.route("/watch-direct/<group>/<int:idx>")
-def watch_direct(group, idx):
-    ch = get_channels(group)
-    return render_template_string(
-        WATCH_HTML,
-        title=ch[idx]["title"] + " (DIRECT)",
-        url=ch[idx]["url"]
+@app.route("/stream")
+def stream():
+    url = request.args.get("u")
+    if not url:
+        abort(404)
+    return Response(
+        stream_with_context(proxy_video_no_audio(url)),
+        mimetype="video/mp4"
     )
 
 @app.route("/random")
 def random_watch():
-    ch = get_channels("india")
-    i = random.randint(0, len(ch)-1)
-    return watch("india", i)
+    ch = random.choice(get_channels("all"))
+    return render_template_string(
+        WATCH_HTML,
+        title=ch["title"],
+        stream_url=f"/stream?u={ch['url']}"
+    )
 
 # ============================================================
 # ENTRY
