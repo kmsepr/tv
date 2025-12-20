@@ -21,7 +21,7 @@ REFRESH_INTERVAL = 1800
 LOGO_FALLBACK = "https://iptv-org.github.io/assets/logo.png"
 
 # ============================================================
-# PLAYLISTS (QUALITY REMOVED) - UPDATED WITH MANY LANGUAGES
+# PLAYLISTS
 # ============================================================
 PLAYLISTS = {
     "all": "https://iptv-org.github.io/iptv/index.m3u",
@@ -69,7 +69,6 @@ def parse_extinf(line: str):
         left, title = line.split(",", 1)
     else:
         left, title = line, ""
-
     attrs = {}
     pos = 0
     while True:
@@ -82,7 +81,6 @@ def parse_extinf(line: str):
         if colon > key_start:
             key_start = colon
         key = left[key_start + 1:key_end].strip()
-
         if eq + 1 < len(left) and left[eq + 1] == '"':
             val_start = eq + 2
             val_end = left.find('"', val_start)
@@ -96,7 +94,6 @@ def parse_extinf(line: str):
                 val_end = len(left)
             val = left[eq + 1:val_end].strip()
             pos = val_end
-
         attrs[key] = val
     return attrs, title.strip()
 
@@ -135,12 +132,10 @@ def get_channels(name: str):
     cached = CACHE.get(name)
     if cached and now - cached.get("time", 0) < REFRESH_INTERVAL:
         return cached["channels"]
-
     url = PLAYLISTS.get(name)
     if not url:
         logging.error("Playlist not found: %s", name)
         return []
-
     logging.info("[%s] Fetching playlist: %s", name, url)
     try:
         resp = requests.get(url, timeout=25)
@@ -174,14 +169,12 @@ def proxy_audio_only(source_url: str):
         "-f", "mp3",
         "pipe:1"
     ]
-
     proc = subprocess.Popen(
         cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
         bufsize=0
     )
-
     try:
         while True:
             chunk = proc.stdout.read(4096)
@@ -193,7 +186,7 @@ def proxy_audio_only(source_url: str):
         proc.wait()
 
 # ============================================================
-# Routes
+# ROUTES
 # ============================================================
 @app.route("/")
 def home():
@@ -215,7 +208,6 @@ def search():
     q = request.args.get("q", "").strip()
     if not q:
         return render_template_string(SEARCH_HTML, query="", results=[], fallback=LOGO_FALLBACK)
-
     ql = q.lower()
     all_channels = get_channels("all")
     results = []
@@ -231,9 +223,9 @@ def search():
             })
     return render_template_string(SEARCH_HTML, query=q, results=results, fallback=LOGO_FALLBACK)
 
-# ------------------------------------------------------------
-# RANDOM LOW 144p PLAYBACK
-# ------------------------------------------------------------
+# =====================
+# Random low-quality playback
+# =====================
 @app.route("/random")
 def random_global():
     channels = get_channels("all")
@@ -252,9 +244,6 @@ def random_category(group):
     idx = random.randint(0, len(channels)-1)
     return f'<script>window.location="/stream-noaudio/{group}/{idx}"</script>'
 
-# ------------------------------------------------------------
-# WATCH / AUDIO / DIRECT
-# ------------------------------------------------------------
 @app.route("/watch/<group>/<int:idx>")
 def watch_channel(group, idx):
     if group not in PLAYLISTS:
@@ -275,25 +264,17 @@ def play_channel_audio(group, idx):
     if idx < 0 or idx >= len(channels):
         abort(404)
     ch = channels[idx]
-
-    def gen():
-        for chunk in proxy_audio_only(ch["url"]):
-            yield chunk
-
-    headers = {"Access-Control-Allow-Origin": "*"}
-    return Response(stream_with_context(gen()), mimetype="audio/mpeg", headers=headers)
+    return Response(stream_with_context(proxy_audio_only(ch["url"])), mimetype="audio/mpeg",
+                    headers={"Access-Control-Allow-Origin": "*"})
 
 @app.route("/stream-noaudio/<group>/<int:idx>")
 def stream_noaudio_iptv(group, idx):
     if group not in PLAYLISTS:
         abort(404)
-
     channels = get_channels(group)
     if idx < 0 or idx >= len(channels):
         abort(404)
-
     url = channels[idx]["url"]
-
     cmd = [
         "ffmpeg",
         "-loglevel", "error",
@@ -314,14 +295,8 @@ def stream_noaudio_iptv(group, idx):
         "-f", "mpegts",
         "pipe:1"
     ]
-
     def generate():
-        proc = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            bufsize=0
-        )
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=0)
         try:
             while True:
                 chunk = proc.stdout.read(4096)
@@ -331,12 +306,8 @@ def stream_noaudio_iptv(group, idx):
         finally:
             proc.terminate()
             proc.wait()
-
-    return Response(
-        stream_with_context(generate()),
-        mimetype="video/mp2t",
-        headers={"Access-Control-Allow-Origin": "*", "Cache-Control":"no-cache"}
-    )
+    return Response(stream_with_context(generate()), mimetype="video/mp2t",
+                    headers={"Access-Control-Allow-Origin": "*", "Cache-Control":"no-cache"})
 
 @app.route("/play-audio-direct")
 def play_audio_direct():
@@ -357,8 +328,13 @@ def watch_direct():
     return render_template_string(WATCH_HTML, channel=channel, mime_type=mime)
 
 # ============================================================
-# ENTRY
+# Entry
 # ============================================================
 if __name__ == "__main__":
     print("Running IPTV Restream on http://0.0.0.0:8000")
     app.run(host="0.0.0.0", port=8000, debug=False, threaded=True)
+
+# ============================================================
+# Include your existing HTML templates here:
+# HOME_HTML, LIST_HTML, WATCH_HTML, FAV_HTML, SEARCH_HTML
+# ============================================================
