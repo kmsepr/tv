@@ -1,21 +1,28 @@
 #!/usr/bin/env python3
-import time, random, logging, requests, subprocess
-from flask import Flask, Response, render_template_string, stream_with_context, request
+import os, time, logging, random, requests, subprocess
+from flask import Flask, Response, render_template_string, abort, stream_with_context, request
 
 # ============================================================
-# SETUP
+# Setup
 # ============================================================
 logging.basicConfig(level=logging.INFO)
 app = Flask(__name__)
+PORT = 8000
 
 REFRESH_INTERVAL = 1800
+LOGO_FALLBACK = "https://iptv-org.github.io/assets/logo.png"
 
+# ============================================================
+# PLAYLISTS
+# ============================================================
 PLAYLISTS = {
     "all": "https://iptv-org.github.io/iptv/index.m3u",
     "india": "https://iptv-org.github.io/iptv/countries/in.m3u",
     "news": "https://iptv-org.github.io/iptv/categories/news.m3u",
     "sports": "https://iptv-org.github.io/iptv/categories/sports.m3u",
+    "movies": "https://iptv-org.github.io/iptv/categories/movies.m3u",
     "malayalam": "https://iptv-org.github.io/iptv/languages/mal.m3u",
+    "hindi": "https://iptv-org.github.io/iptv/languages/hin.m3u",
 }
 
 CACHE = {}
@@ -23,15 +30,50 @@ CACHE = {}
 # ============================================================
 # M3U PARSER
 # ============================================================
+def parse_extinf(line):
+    if "," in line:
+        left, title = line.split(",", 1)
+    else:
+        left, title = line, ""
+    attrs = {}
+    pos = 0
+    while True:
+        eq = left.find("=", pos)
+        if eq == -1:
+            break
+        key_end = eq
+        key_start = left.rfind(" ", 0, key_end)
+        colon = left.rfind(":", 0, key_end)
+        if colon > key_start:
+            key_start = colon
+        key = left[key_start + 1:key_end].strip()
+        if left[eq + 1] == '"':
+            val_start = eq + 2
+            val_end = left.find('"', val_start)
+            val = left[val_start:val_end]
+            pos = val_end + 1
+        else:
+            val_end = left.find(" ", eq + 1)
+            if val_end == -1:
+                val_end = len(left)
+            val = left[eq + 1:val_end]
+            pos = val_end
+        attrs[key] = val
+    return attrs, title.strip()
+
 def parse_m3u(text):
     lines = [l.strip() for l in text.splitlines() if l.strip()]
     out = []
     i = 0
     while i < len(lines):
         if lines[i].startswith("#EXTINF"):
-            title = lines[i].split(",", 1)[-1]
-            url = lines[i + 1]
-            out.append({"title": title, "url": url})
+            attrs, title = parse_extinf(lines[i])
+            url = lines[i+1]
+            out.append({
+                "title": title or attrs.get("tvg-name") or "Unknown",
+                "url": url,
+                "logo": attrs.get("tvg-logo") or ""
+            })
             i += 2
         else:
             i += 1
@@ -47,131 +89,119 @@ def get_channels(name):
     return ch
 
 # ============================================================
-# STREAM PROXY (144p NO AUDIO)
-# ============================================================
-def proxy_video_144p(url):
-    cmd = [
-        "ffmpeg", "-i", url, "-an",
-        "-vf", "scale=-2:144",
-        "-b:v", "40k",
-        "-preset", "veryfast",
-        "-movflags", "frag_keyframe+empty_moov",
-        "-f", "mp4", "pipe:1"
-    ]
-    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-    for c in iter(lambda: p.stdout.read(1024), b""):
-        yield c
-
-# ============================================================
-# COMMON STYLE (BIG UI)
+# MODERN STYLE
 # ============================================================
 STYLE = """
 <style>
 body{
- background:black;
- color:#0f0;
- font-family:Arial, sans-serif;
- font-size:24px;
- padding:14px;
+  margin:0;
+  background:#0f0f0f;
+  color:#fff;
+  font-family:system-ui,Arial;
+  font-size:20px;
+  padding:14px;
 }
 h2,h3{text-align:center;margin:10px 0}
 .card{
- border:3px solid #0f0;
- border-radius:16px;
- padding:18px;
- margin-bottom:16px;
+  background:#1b1b1b;
+  border-radius:14px;
+  padding:16px;
+  margin-bottom:14px;
 }
-.top-grid{
- display:grid;
- grid-template-columns:1fr 1fr;
- gap:14px;
- margin-bottom:20px;
+.top{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:12px;
 }
 a,button,input{
- font-size:24px;
- padding:16px;
- border-radius:14px;
- border:3px solid #0f0;
- background:black;
- color:#0f0;
- text-decoration:none;
- width:100%;
- box-sizing:border-box;
+  font-size:20px;
+  padding:14px;
+  border-radius:12px;
+  border:none;
+  background:#2a2a2a;
+  color:#fff;
+  width:100%;
+  text-decoration:none;
 }
 button{cursor:pointer}
-.search{margin-bottom:18px}
-.btn-row{
- display:grid;
- grid-template-columns:1fr 1fr;
- gap:12px;
- margin-top:14px;
+.btns{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:10px;
+  margin-top:12px;
 }
-hr{border:1px solid #0f0;margin:22px 0}
+hr{
+  border:none;
+  height:1px;
+  background:#333;
+  margin:18px 0;
+}
+.small{opacity:.7;font-size:16px}
 </style>
 """
 
 # ============================================================
-# HTML TEMPLATES
+# HOME
 # ============================================================
 HOME_HTML = """
-<!doctype html>
-<html>
-<head>{{style}}</head>
-<body>
+<!doctype html><html><head>{{style}}</head><body>
 
 <h2>📺 IPTV</h2>
 
-<div class="card search">
+<div class="card">
 <form action="/search">
-<input name="q" placeholder="🔍 Search channel..." autofocus>
+<input name="q" placeholder="Search channel">
 </form>
 </div>
 
-<div class="top-grid">
- <div class="card"><a href="/random">🎲 RANDOM</a></div>
- <div class="card"><a href="/favourites">⭐ FAVOURITES</a></div>
+<div class="top">
+  <div class="card"><a href="/random">🎲 Random</a></div>
+  <div class="card"><a href="/favourites">⭐ Favourites</a></div>
 </div>
 
 <hr>
-<h3>📂 CATEGORIES</h3>
+
+<h3>Categories</h3>
 
 {% for k in playlists %}
 <div class="card">
- <a href="/list/{{k}}">{{k|upper}}</a>
+<a href="/list/{{k}}">{{k|upper}}</a>
 </div>
 {% endfor %}
 
 </body></html>
 """
 
+# ============================================================
+# LIST
+# ============================================================
 LIST_HTML = """
-<!doctype html>
-<html>
-<head>{{style}}</head>
-<body>
+<!doctype html><html><head>{{style}}</head><body>
 
-<a href="/">⬅ BACK</a>
+<a class="small" href="/">← Back</a>
 <hr>
 
 {% for ch in channels %}
 <div class="card">
- <b>{{loop.index}}. {{ch.title}}</b>
+<b>{{loop.index}}. {{ch.title}}</b>
 
- <div class="btn-row">
-  <a href="/watch/{{group}}/{{loop.index0}}">▶ WATCH</a>
-  <a href="/play-144p/{{group}}/{{loop.index0}}">📺 144P</a>
- </div>
+<div class="btns">
+<a href="/watch/{{group}}/{{loop.index0}}">▶ Watch</a>
+<a href="/stream-noaudio/{{group}}/{{loop.index0}}">📺 144p</a>
+</div>
 
- <button style="margin-top:12px"
-  onclick='fav("{{ch.title}}","{{ch.url}}")'>⭐ ADD TO FAV</button>
+<button style="margin-top:10px"
+ onclick='fav("{{ch.title|replace('"','')}}","{{ch.url}}","{{ch.logo}}")'>
+⭐ Add to favourites
+</button>
 </div>
 {% endfor %}
 
 <script>
-function fav(t,u){
+function fav(t,u,l){
  let f=JSON.parse(localStorage.getItem("favs")||"[]");
  if(!f.find(x=>x.url==u)){
-  f.push({title:t,url:u});
+  f.push({title:t,url:u,logo:l});
   localStorage.setItem("favs",JSON.stringify(f));
   alert("Added");
  }
@@ -181,75 +211,40 @@ function fav(t,u){
 </body></html>
 """
 
-WATCH_HTML = """
-<!doctype html>
-<html>
-<head>{{style}}</head>
-<body>
-
-<a href="/">⬅ BACK</a>
-<h3>{{channel.title}}</h3>
-
-<video controls autoplay
- style="width:100%;max-height:80vh;border:3px solid #0f0">
- <source src="{{channel.url}}">
-</video>
-
-</body></html>
-"""
-
+# ============================================================
+# SEARCH
+# ============================================================
 SEARCH_HTML = """
-<!doctype html>
-<html>
-<head>{{style}}</head>
-<body>
+<!doctype html><html><head>{{style}}</head><body>
 
-<a href="/">⬅ BACK</a>
-<hr>
-<h3>Results for "{{q}}"</h3>
+<a class="small" href="/">← Back</a>
 
-{% for ch in results %}
+<h3>Results for "{{query}}"</h3>
+
+{% for r in results %}
 <div class="card">
- <b>{{ch.title}}</b>
-
- <div class="btn-row">
-  <a href="/watch/all/{{ch.index}}">▶ WATCH</a>
-  <a href="/play-144p/all/{{ch.index}}">📺 144P</a>
- </div>
-
- <button style="margin-top:12px"
-  onclick='fav("{{ch.title}}","{{ch.url}}")'>⭐</button>
+<b>{{r.title}}</b>
+<div class="btns">
+<a href="/watch/all/{{r.index}}">▶ Watch</a>
+<a href="/stream-noaudio/all/{{r.index}}">📺 144p</a>
+</div>
 </div>
 {% endfor %}
 
 </body></html>
 """
 
-FAV_HTML = """
-<!doctype html>
-<html>
-<head>{{style}}</head>
-<body>
+# ============================================================
+# WATCH
+# ============================================================
+WATCH_HTML = """
+<!doctype html><html><head>{{style}}</head><body>
 
-<a href="/">⬅ BACK</a>
-<h3>⭐ FAVOURITES</h3>
+<h3>{{channel.title}}</h3>
 
-<div id="f"></div>
-
-<script>
-let f=JSON.parse(localStorage.getItem("favs")||"[]");
-let h="";
-f.forEach(c=>{
- h+=`<div class="card">
- <b>${c.title}</b>
- <div class="btn-row">
-  <a href="/watch-direct?u=${encodeURIComponent(c.url)}">▶ WATCH</a>
-  <a href="/play-144p-direct?u=${encodeURIComponent(c.url)}">📺 144P</a>
- </div>
- </div>`;
-});
-document.getElementById("f").innerHTML=h;
-</script>
+<video controls autoplay playsinline style="width:100%;max-height:80vh;border-radius:12px;">
+<source src="{{channel.url}}">
+</video>
 
 </body></html>
 """
@@ -265,61 +260,54 @@ def home():
 def list_group(group):
     return render_template_string(
         LIST_HTML,
-        group=group,
         channels=get_channels(group),
+        group=group,
         style=STYLE
     )
-
-@app.route("/random")
-def random_play():
-    ch = random.choice(get_channels("all"))
-    return render_template_string(WATCH_HTML, channel=ch, style=STYLE)
-
-@app.route("/watch/<group>/<int:i>")
-def watch(group, i):
-    ch = get_channels(group)[i]
-    return render_template_string(WATCH_HTML, channel=ch, style=STYLE)
 
 @app.route("/search")
 def search():
     q = request.args.get("q","").lower()
+    allc = get_channels("all")
     res = []
-    for i,ch in enumerate(get_channels("all")):
-        if q in ch["title"].lower():
-            ch["index"] = i
-            res.append(ch)
-    return render_template_string(
-        SEARCH_HTML, q=q, results=res, style=STYLE
-    )
+    for i,c in enumerate(allc):
+        if q in c["title"].lower():
+            res.append({"index":i,"title":c["title"]})
+    return render_template_string(SEARCH_HTML, query=q, results=res, style=STYLE)
 
-@app.route("/play-144p/<group>/<int:i>")
-def play_144p(group, i):
-    return Response(
-        stream_with_context(proxy_video_144p(get_channels(group)[i]["url"])),
-        mimetype="video/mp4"
-    )
+@app.route("/random")
+def random_ch():
+    c = random.choice(get_channels("all"))
+    return render_template_string(WATCH_HTML, channel=c, style=STYLE)
 
-@app.route("/play-144p-direct")
-def video_direct():
-    return Response(
-        stream_with_context(proxy_video_144p(request.args["u"])),
-        mimetype="video/mp4"
-    )
-
-@app.route("/watch-direct")
-def watch_direct():
+@app.route("/watch/<group>/<int:i>")
+def watch(group,i):
     return render_template_string(
         WATCH_HTML,
-        channel={"title":"Channel","url":request.args["u"]},
+        channel=get_channels(group)[i],
         style=STYLE
     )
 
-@app.route("/favourites")
-def favs():
-    return render_template_string(FAV_HTML, style=STYLE)
-
 # ============================================================
-# RUN
+# 144p NO AUDIO STREAM (UNCHANGED)
+# ============================================================
+@app.route("/stream-noaudio/<group>/<int:i>")
+def noaudio(group,i):
+    url = get_channels(group)[i]["url"]
+    cmd = [
+        "ffmpeg","-loglevel","error",
+        "-i",url,
+        "-an","-vf","scale=256:144","-r","15",
+        "-b:v","40k","-f","mpegts","pipe:1"
+    ]
+    def gen():
+        p=subprocess.Popen(cmd,stdout=subprocess.PIPE)
+        while True:
+            d=p.stdout.read(4096)
+            if not d: break
+            yield d
+    return Response(stream_with_context(gen()),mimetype="video/mp2t")
+
 # ============================================================
 if __name__ == "__main__":
     print("Running on http://0.0.0.0:8000")
