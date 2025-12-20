@@ -9,139 +9,118 @@ app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 
 # -------------------------------------------------
-# IPTV PLAYLIST
+# ORIGINAL PLAYLIST CATEGORIES (AS YOU GAVE)
 # -------------------------------------------------
-PLAYLIST_URL = "https://iptv-org.github.io/iptv/countries/in.m3u"
-CACHE = []
-CACHE_TIME = 0
+PLAYLISTS = {
+    "all": "https://iptv-org.github.io/iptv/index.m3u",
+
+    "india": "https://iptv-org.github.io/iptv/countries/in.m3u",
+    "usa": "https://iptv-org.github.io/iptv/countries/us.m3u",
+    "uk": "https://iptv-org.github.io/iptv/countries/uk.m3u",
+    "uae": "https://iptv-org.github.io/iptv/countries/ae.m3u",
+    "saudi": "https://iptv-org.github.io/iptv/countries/sa.m3u",
+    "pakistan": "https://iptv-org.github.io/iptv/countries/pk.m3u",
+
+    "news": "https://iptv-org.github.io/iptv/categories/news.m3u",
+    "sports": "https://iptv-org.github.io/iptv/categories/sports.m3u",
+    "movies": "https://iptv-org.github.io/iptv/categories/movies.m3u",
+    "music": "https://iptv-org.github.io/iptv/categories/music.m3u",
+    "kids": "https://iptv-org.github.io/iptv/categories/kids.m3u",
+    "entertainment": "https://iptv-org.github.io/iptv/categories/entertainment.m3u",
+
+    "english": "https://iptv-org.github.io/iptv/languages/eng.m3u",
+    "hindi": "https://iptv-org.github.io/iptv/languages/hin.m3u",
+    "tamil": "https://iptv-org.github.io/iptv/languages/tam.m3u",
+    "telugu": "https://iptv-org.github.io/iptv/languages/tel.m3u",
+    "malayalam": "https://iptv-org.github.io/iptv/languages/mal.m3u",
+    "kannada": "https://iptv-org.github.io/iptv/languages/kan.m3u",
+
+    "arabic": "https://iptv-org.github.io/iptv/languages/ara.m3u",
+    "urdu": "https://iptv-org.github.io/iptv/languages/urd.m3u",
+}
+
+CACHE = {}
 CACHE_TTL = 1800
 
-def load_channels():
-    global CACHE, CACHE_TIME
-    if time.time() - CACHE_TIME < CACHE_TTL and CACHE:
-        return CACHE
+# -------------------------------------------------
+# LOAD CHANNELS FOR A CATEGORY
+# -------------------------------------------------
+def load_channels(cat):
+    now = time.time()
+    if cat in CACHE and now - CACHE[cat]["time"] < CACHE_TTL:
+        return CACHE[cat]["channels"]
 
-    txt = requests.get(PLAYLIST_URL, timeout=20).text
+    url = PLAYLISTS.get(cat)
+    if not url:
+        return []
+
+    txt = requests.get(url, timeout=20).text
     lines = [l.strip() for l in txt.splitlines() if l.strip()]
 
     channels = []
     for i in range(len(lines)):
         if lines[i].startswith("#EXTINF") and i + 1 < len(lines):
-            meta = lines[i]
-            title = meta.split(",", 1)[-1]
-            group = "Other"
-            if 'group-title="' in meta:
-                group = meta.split('group-title="')[1].split('"')[0]
-            url = lines[i + 1]
-            channels.append({
-                "title": title,
-                "url": url,
-                "group": group
-            })
+            title = lines[i].split(",", 1)[-1]
+            stream = lines[i + 1]
+            channels.append({"title": title, "url": stream})
 
-    CACHE = channels
-    CACHE_TIME = time.time()
+    CACHE[cat] = {"time": now, "channels": channels}
     return channels
 
 # -------------------------------------------------
-# HOME UI
+# UI TEMPLATES
 # -------------------------------------------------
 HOME_HTML = """
 <!doctype html>
 <html>
 <head>
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>IPTV</title>
+<title>IPTV Categories</title>
 <style>
 body{background:#000;color:#0f0;font-family:Arial;padding:10px}
-input,select,button{
-  padding:6px;border-radius:6px;border:1px solid #0f0;
-  background:#000;color:#0f0;margin:4px
-}
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px}
-.card{border:1px solid #0f0;border-radius:10px;padding:10px;background:#111}
-.card h4{margin:0 0 8px 0;font-size:14px}
-a{display:block;margin:4px 0;padding:6px;
-border:1px solid #0f0;border-radius:6px;color:#0f0;text-decoration:none;text-align:center}
+a{display:inline-block;margin:6px;padding:10px 14px;
+border:1px solid #0f0;border-radius:10px;
+color:#0f0;text-decoration:none}
 a:hover{background:#0f0;color:#000}
-.fav{cursor:pointer;font-size:18px}
 </style>
-
-<script>
-let channels = {{ channels | safe }};
-let favs = JSON.parse(localStorage.getItem("favs") || "[]");
-
-function render(list){
-  const g = document.getElementById("grid");
-  g.innerHTML = "";
-  list.forEach((c,i)=>{
-    const fav = favs.includes(i) ? "★" : "☆";
-    g.innerHTML += `
-    <div class="card">
-      <h4>${c.title}</h4>
-      <div>${c.group}</div>
-      <div class="fav" onclick="toggleFav(${i})">${fav}</div>
-      <a href="/watch/${i}">▶ Watch</a>
-      <a href="/watch-low/${i}">🔇 144p</a>
-    </div>`;
-  });
-}
-
-function toggleFav(i){
-  if(favs.includes(i)) favs = favs.filter(x=>x!==i);
-  else favs.push(i);
-  localStorage.setItem("favs",JSON.stringify(favs));
-  render(currentList);
-}
-
-function filter(){
-  const q = document.getElementById("q").value.toLowerCase();
-  const cat = document.getElementById("cat").value;
-  currentList = channels.filter((c,i)=>{
-    return (!q || c.title.toLowerCase().includes(q)) &&
-           (!cat || c.group===cat);
-  });
-  render(currentList);
-}
-
-function showFavs(){
-  currentList = favs.map(i=>channels[i]).filter(Boolean);
-  render(currentList);
-}
-
-function randomPlay(){
-  const i = Math.floor(Math.random()*channels.length);
-  location.href="/watch/"+i;
-}
-
-let currentList = channels;
-window.onload=()=>render(channels);
-</script>
 </head>
 <body>
-
-<h3>📺 IPTV Streaming</h3>
-
-<input id="q" placeholder="Search..." oninput="filter()">
-<select id="cat" onchange="filter()">
-  <option value="">All Categories</option>
-  {% for c in categories %}
-  <option>{{ c }}</option>
-  {% endfor %}
-</select>
-
-<button onclick="randomPlay()">🎲 Random</button>
-<button onclick="showFavs()">⭐ Favourites</button>
-
-<div class="grid" id="grid"></div>
-
+<h3>📂 Categories</h3>
+{% for k in playlists %}
+<a href="/list/{{ k }}">{{ k.replace('_',' ').title() }}</a>
+{% endfor %}
 </body>
 </html>
 """
 
-# -------------------------------------------------
-# WATCH PAGE
-# -------------------------------------------------
+LIST_HTML = """
+<!doctype html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{ cat }}</title>
+<style>
+body{background:#000;color:#0f0;font-family:Arial;padding:10px}
+.card{border:1px solid #0f0;border-radius:10px;padding:10px;margin:8px 0;background:#111}
+a{display:inline-block;margin:4px;padding:6px 10px;
+border:1px solid #0f0;border-radius:6px;color:#0f0;text-decoration:none}
+</style>
+</head>
+<body>
+<a href="/">⬅ Back</a>
+<h3>{{ cat.replace('_',' ').title() }}</h3>
+
+{% for c in channels %}
+<div class="card">
+<b>{{ c.title }}</b><br>
+<a href="/watch/{{ cat }}/{{ loop.index0 }}">▶ Watch</a>
+<a href="/watch-low/{{ cat }}/{{ loop.index0 }}">🔇 144p</a>
+</div>
+{% endfor %}
+</body>
+</html>
+"""
+
 WATCH_HTML = """
 <!doctype html>
 <html>
@@ -166,17 +145,21 @@ video{width:100%;height:100vh;background:#000}
 # -------------------------------------------------
 @app.route("/")
 def home():
-    ch = load_channels()
-    categories = sorted(set(c["group"] for c in ch))
+    return render_template_string(HOME_HTML, playlists=PLAYLISTS.keys())
+
+@app.route("/list/<cat>")
+def list_cat(cat):
+    if cat not in PLAYLISTS:
+        abort(404)
     return render_template_string(
-        HOME_HTML,
-        channels=ch,
-        categories=categories
+        LIST_HTML,
+        cat=cat,
+        channels=load_channels(cat)
     )
 
-@app.route("/watch/<int:idx>")
-def watch(idx):
-    ch = load_channels()
+@app.route("/watch/<cat>/<int:idx>")
+def watch(cat, idx):
+    ch = load_channels(cat)
     if idx >= len(ch):
         abort(404)
     return render_template_string(
@@ -186,21 +169,18 @@ def watch(idx):
         mime="application/x-mpegURL"
     )
 
-@app.route("/watch-low/<int:idx>")
-def watch_low(idx):
-    ch = load_channels()
-    if idx >= len(ch):
-        abort(404)
+@app.route("/watch-low/<cat>/<int:idx>")
+def watch_low(cat, idx):
     return render_template_string(
         WATCH_HTML,
-        title=ch[idx]["title"] + " (144p)",
-        src=f"/stream/{idx}",
+        title="Low Stream",
+        src=f"/stream/{cat}/{idx}",
         mime="video/mp2t"
     )
 
-@app.route("/stream/<int:idx>")
-def stream(idx):
-    ch = load_channels()
+@app.route("/stream/<cat>/<int:idx>")
+def stream(cat, idx):
+    ch = load_channels(cat)
     if idx >= len(ch):
         abort(404)
 
