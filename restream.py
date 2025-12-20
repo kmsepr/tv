@@ -6,46 +6,45 @@ app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 
 # -------------------------------------------------
-# PLAYLISTS
+# PLAYLISTS (CATEGORIES)
 # -------------------------------------------------
 PLAYLISTS = {
-    "India": "https://iptv-org.github.io/iptv/countries/in.m3u",
-    "USA": "https://iptv-org.github.io/iptv/countries/us.m3u",
-    "UK": "https://iptv-org.github.io/iptv/countries/uk.m3u",
-    "UAE": "https://iptv-org.github.io/iptv/countries/ae.m3u",
-
-    "News": "https://iptv-org.github.io/iptv/categories/news.m3u",
-    "Sports": "https://iptv-org.github.io/iptv/categories/sports.m3u",
-    "Movies": "https://iptv-org.github.io/iptv/categories/movies.m3u",
-    "Music": "https://iptv-org.github.io/iptv/categories/music.m3u",
-
-    "Malayalam": "https://iptv-org.github.io/iptv/languages/mal.m3u",
-    "Hindi": "https://iptv-org.github.io/iptv/languages/hin.m3u",
-    "Tamil": "https://iptv-org.github.io/iptv/languages/tam.m3u",
+    "india": "https://iptv-org.github.io/iptv/countries/in.m3u",
+    "news": "https://iptv-org.github.io/iptv/categories/news.m3u",
+    "sports": "https://iptv-org.github.io/iptv/categories/sports.m3u",
+    "movies": "https://iptv-org.github.io/iptv/categories/movies.m3u",
+    "music": "https://iptv-org.github.io/iptv/categories/music.m3u",
+    "kids": "https://iptv-org.github.io/iptv/categories/kids.m3u",
+    "malayalam": "https://iptv-org.github.io/iptv/languages/mal.m3u",
+    "tamil": "https://iptv-org.github.io/iptv/languages/tam.m3u",
 }
 
-CACHE, CACHE_TTL = {}, 1800
-
-def load_playlist(url):
-    now = time.time()
-    if url in CACHE and now - CACHE[url]["t"] < CACHE_TTL:
-        return CACHE[url]["d"]
-
-    txt = requests.get(url, timeout=20).text
-    lines = [l.strip() for l in txt.splitlines() if l.strip()]
-    out = []
-    for i in range(len(lines)):
-        if lines[i].startswith("#EXTINF") and i+1 < len(lines):
-            out.append({
-                "idx": i,
-                "title": lines[i].split(",",1)[-1],
-                "url": lines[i+1]
-            })
-    CACHE[url] = {"t": now, "d": out}
-    return out
+CACHE = {}
+CACHE_TTL = 1800
 
 # -------------------------------------------------
-# HTML
+# LOAD CHANNELS
+# -------------------------------------------------
+def load_channels(key):
+    now = time.time()
+    if key in CACHE and now - CACHE[key]["time"] < CACHE_TTL:
+        return CACHE[key]["data"]
+
+    txt = requests.get(PLAYLISTS[key], timeout=20).text
+    lines = [l.strip() for l in txt.splitlines() if l.strip()]
+    ch = []
+
+    for i in range(len(lines)):
+        if lines[i].startswith("#EXTINF") and i + 1 < len(lines):
+            title = lines[i].split(",", 1)[-1]
+            url = lines[i + 1]
+            ch.append({"title": title, "url": url})
+
+    CACHE[key] = {"data": ch, "time": now}
+    return ch
+
+# -------------------------------------------------
+# HTML (KEYPAD FRIENDLY + LOCALSTORAGE FAV)
 # -------------------------------------------------
 HTML = """
 <!doctype html>
@@ -65,22 +64,27 @@ border:1px solid #0f0;background:#111;color:#0f0;border-radius:8px;text-decorati
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px}
 .card{border:1px solid #0f0;border-radius:10px;padding:10px;background:#111;text-align:center}
 a.link{display:block;margin:6px 0;padding:10px;border:1px solid #0f0;border-radius:6px;color:#0f0;text-decoration:none}
-.small{font-size:13px;padding:6px;margin-top:6px}
+.small{font-size:14px;padding:6px;margin-top:6px}
 </style>
 
 <script>
-function favs(){return JSON.parse(localStorage.getItem("iptv_favs")||"[]")}
-function save(f){localStorage.setItem("iptv_favs",JSON.stringify(f))}
+function favs(){
+  try{ return JSON.parse(localStorage.getItem("iptv_favs")||"[]") }
+  catch(e){ return [] }
+}
+function save(f){ localStorage.setItem("iptv_favs",JSON.stringify(f)) }
 
-function toggle(key, title){
+function toggle(key,title){
  let f=favs();
- if(f.includes(key)){
-   if(confirm("Remove from favourites?\\n"+title)){
-     f=f.filter(x=>x!=key); save(f); location.reload();
+ let i=f.findIndex(x=>x.key===key);
+ if(i>=0){
+   if(confirm("Remove from favourites?")){
+     f.splice(i,1); save(f); location.reload();
    }
  }else{
-   if(confirm("Add to favourites?\\n"+title)){
-     f.push(key); save(f); alert("Added to favourites");
+   if(confirm("Add to favourites?")){
+     f.push({key:key,title:title}); save(f);
+     alert("Added to favourites");
    }
  }
 }
@@ -103,9 +107,9 @@ function toggle(key, title){
 
 {% if page=="home" %}
 <div class="grid">
-{% for i in items %}
+{% for k,v in items.items() %}
 <div class="card">
-<a class="link" href="/category/{{ i.key }}">{{ i.name }}</a>
+<a class="link" href="/category/{{ k }}">{{ k.upper() }}</a>
 </div>
 {% endfor %}
 </div>
@@ -115,33 +119,36 @@ function toggle(key, title){
 {% for i in items %}
 <div class="card">
 <b>{{ i.title }}</b>
-<a class="link" href="/watch/{{ i.cat }}/{{ i.idx }}">▶ Watch</a>
-<a class="link" href="/watch-low/{{ i.cat }}/{{ i.idx }}">🔇 144p</a>
-<button class="small" onclick="toggle('{{ i.cat }}|{{ i.idx }}','{{ i.title }}')">⭐ Favourite</button>
+<a class="link" href="/watch/{{ cat }}/{{ loop.index0 }}">▶ Watch</a>
+<a class="link" href="/watch-low/{{ cat }}/{{ loop.index0 }}">🔇 144p</a>
+<button class="small"
+onclick="toggle('{{ cat }}|{{ loop.index0 }}','{{ i.title }}')">
+⭐ Favourite
+</button>
 </div>
 {% endfor %}
 </div>
 
 {% elif page=="favs" %}
 <div id="favlist" class="grid"></div>
-
 <script>
-const favBox=document.getElementById("favlist");
-const fav=favs();
+document.addEventListener("DOMContentLoaded",()=>{
+ const box=document.getElementById("favlist");
+ const f=favs();
+ if(!f.length){ box.innerHTML="<p>No favourites added</p>"; return; }
 
-if(!fav.length){
- favBox.innerHTML="<p>No favourites yet</p>";
-}
-
-fav.forEach(k=>{
- const [cat,idx]=k.split("|");
- favBox.innerHTML+=`
- <div class="card">
- <b>${cat}</b>
- <a class="link" href="/watch/${cat}/${idx}">▶ Watch</a>
- <a class="link" href="/watch-low/${cat}/${idx}">🔇 144p</a>
- <button class="small" onclick="toggle('${k}','${cat}')">❌ Remove</button>
- </div>`;
+ f.forEach(x=>{
+   let [cat,idx]=x.key.split("|");
+   box.innerHTML+=`
+   <div class="card">
+     <b>${x.title}</b>
+     <a class="link" href="/watch/${cat}/${idx}">▶ Watch</a>
+     <a class="link" href="/watch-low/${cat}/${idx}">🔇 144p</a>
+     <button class="small" onclick="toggle('${x.key}','${x.title}')">
+       ❌ Remove
+     </button>
+   </div>`;
+ });
 });
 </script>
 {% endif %}
@@ -155,53 +162,68 @@ fav.forEach(k=>{
 # -------------------------------------------------
 @app.route("/")
 def home():
-    items=[{"name":k,"key":k} for k in PLAYLISTS]
-    return render_template_string(HTML,items=items,page="home")
+    return render_template_string(HTML, page="home", items=PLAYLISTS)
 
 @app.route("/category/<cat>")
 def category(cat):
     if cat not in PLAYLISTS: abort(404)
-    items=[c|{"cat":cat} for c in load_playlist(PLAYLISTS[cat])]
-    return render_template_string(HTML,items=items,page="list")
-
-@app.route("/search")
-def search():
-    q=request.args.get("q","").lower()
-    res=[]
-    for cat,url in PLAYLISTS.items():
-        for c in load_playlist(url):
-            if q in c["title"].lower():
-                res.append(c|{"cat":cat})
-    return render_template_string(HTML,items=res,page="list")
+    return render_template_string(
+        HTML, page="list", items=load_channels(cat), cat=cat
+    )
 
 @app.route("/favourites")
 def favourites():
-    return render_template_string(HTML,items=[],page="favs")
+    return render_template_string(HTML, page="favs")
 
-@app.route("/watch/<cat>/<int:i>")
-def watch(cat,i):
-    ch=load_playlist(PLAYLISTS[cat])
-    return f"<video controls autoplay src='{ch[i]['url']}' style='width:100%;height:100vh'></video>"
+@app.route("/watch/<cat>/<int:idx>")
+def watch(cat, idx):
+    ch = load_channels(cat)
+    if idx >= len(ch): abort(404)
+    return f"""
+    <video controls autoplay playsinline
+     style="width:100%;height:100vh;background:#000"
+     src="{ch[idx]['url']}"></video>
+    """
 
-@app.route("/watch-low/<cat>/<int:i>")
-def watch_low(cat,i):
-    return f"<video controls autoplay src='/stream/{cat}/{i}' style='width:100%;height:100vh'></video>"
+@app.route("/watch-low/<cat>/<int:idx>")
+def watch_low(cat, idx):
+    return f"""
+    <video controls autoplay playsinline
+     style="width:100%;height:100vh;background:#000"
+     src="/stream/{cat}/{idx}"></video>
+    """
 
-@app.route("/stream/<cat>/<int:i>")
-def stream(cat,i):
-    url=load_playlist(PLAYLISTS[cat])[i]["url"]
-    cmd=["ffmpeg","-loglevel","error","-i",url,"-an",
-         "-vf","scale=256:144","-r","15",
-         "-c:v","libx264","-preset","ultrafast",
-         "-b:v","40k","-f","mpegts","pipe:1"]
+@app.route("/stream/<cat>/<int:idx>")
+def stream(cat, idx):
+    ch = load_channels(cat)
+    if idx >= len(ch): abort(404)
+
+    cmd = [
+        "ffmpeg","-loglevel","error",
+        "-i", ch[idx]["url"],
+        "-an",
+        "-vf","scale=256:144",
+        "-r","15",
+        "-c:v","libx264",
+        "-preset","ultrafast",
+        "-tune","zerolatency",
+        "-b:v","40k",
+        "-f","mpegts","pipe:1"
+    ]
+
     def gen():
-        p=subprocess.Popen(cmd,stdout=subprocess.PIPE)
-        while True:
-            d=p.stdout.read(4096)
-            if not d: break
-            yield d
+        p=subprocess.Popen(cmd,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL)
+        try:
+            while True:
+                d=p.stdout.read(4096)
+                if not d: break
+                yield d
+        finally:
+            p.terminate()
+
     return Response(gen(),mimetype="video/mp2t")
 
 # -------------------------------------------------
-if __name__=="__main__":
-    app.run(host="0.0.0.0",port=8000,threaded=True)
+if __name__ == "__main__":
+    print("▶ http://0.0.0.0:8000")
+    app.run(host="0.0.0.0", port=8000, threaded=True)
