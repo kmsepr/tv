@@ -278,6 +278,8 @@ input#search{width:60%;padding:8px;border-radius:6px;border:1px solid #0f0;backg
     <div style="margin-top:6px">
       <a class="btn" href="/watch/{{ group }}/{{ loop.index0 }}" target="_blank">▶️</a>
       <a class="btn" href="/play-audio/{{ group }}/{{ loop.index0 }}" target="_blank">🎧</a>
+
+      <a class="btn" href="/stream-noaudio/{{ group }}/{{ loop.index0 }}" target="_blank">🔇 144p</a>
       <button class="k" onclick='addFav("{{ ch.title|replace('"','&#34;') }}","{{ ch.url }}","{{ ch.logo }}")'>⭐</button>
     </div>
   </div>
@@ -685,6 +687,70 @@ def play_audio_fav(index):
     window.location = '/play-audio-direct?u=' + encodeURIComponent(f.url);
     </script>
     """ % index
+
+
+@app.route("/stream-noaudio/<group>/<int:idx>")
+def stream_noaudio_iptv(group, idx):
+    if group not in PLAYLISTS:
+        abort(404)
+
+    channels = get_channels(group)
+    if idx < 0 or idx >= len(channels):
+        abort(404)
+
+    url = channels[idx]["url"]
+
+    cmd = [
+        "ffmpeg",
+        "-loglevel", "error",
+
+        # 🔁 IPTV stability
+        "-reconnect", "1",
+        "-reconnect_streamed", "1",
+        "-reconnect_delay_max", "5",
+
+        "-i", url,
+
+        "-an",                        # 🔇 NO AUDIO
+        "-vf", "scale=256:144",
+        "-r", "15",
+
+        "-c:v", "libx264",
+        "-preset", "ultrafast",
+        "-tune", "zerolatency",
+
+        "-b:v", "40k",
+        "-maxrate", "40k",
+        "-bufsize", "240k",
+
+        "-g", "30",
+
+        "-f", "mpegts",
+        "pipe:1"
+    ]
+
+    def generate():
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            bufsize=0
+        )
+        try:
+            while True:
+                chunk = proc.stdout.read(4096)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            proc.terminate()
+            proc.wait()
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype="video/mp2t",
+        headers={"Access-Control-Allow-Origin": "*"}
+    )
 
 @app.route("/play-audio-direct")
 def play_audio_direct():
