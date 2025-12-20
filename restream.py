@@ -190,4 +190,4 @@ def stream_noaudio(group, idx):
 # =============================
 if __name__=="__main__":
     print(f"▶ IPTV running on http://0.0.0.0:{PORT}")
-    app.run(host="0.0.0.0", port=PORT)
+    app.run(host="0.0.0.0", port=PORT, debug=True)
