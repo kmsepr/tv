@@ -9,7 +9,6 @@ logging.basicConfig(level=logging.INFO)
 app = Flask(__name__)
 
 REFRESH_INTERVAL = 1800
-LOGO_FALLBACK = "https://iptv-org.github.io/assets/logo.png"
 
 PLAYLISTS = {
     "all": "https://iptv-org.github.io/iptv/index.m3u",
@@ -32,7 +31,7 @@ def parse_m3u(text):
         if lines[i].startswith("#EXTINF"):
             title = lines[i].split(",", 1)[-1]
             url = lines[i + 1]
-            out.append({"title": title, "url": url, "logo": ""})
+            out.append({"title": title, "url": url})
             i += 2
         else:
             i += 1
@@ -70,56 +69,92 @@ def proxy_video_144p(url):
         yield c
 
 # ============================================================
-# BIG TEXT HTML
+# BIG CARD UI STYLE
 # ============================================================
-BASE_STYLE = """
+STYLE = """
 <style>
 body{
  background:black;color:#0f0;
  font-family:Arial;
  font-size:22px;
- padding:14px;
+ padding:12px;
 }
-a,button{
+.card{
+ border:3px solid #0f0;
+ border-radius:14px;
+ padding:16px;
+ margin-bottom:14px;
+}
+.top-grid{
+ display:grid;
+ grid-template-columns:1fr 1fr;
+ gap:12px;
+}
+a,button,input{
  font-size:22px;
  padding:14px;
- margin:6px;
- display:inline-block;
- border:2px solid #0f0;
- color:#0f0;
+ border-radius:12px;
+ border:3px solid #0f0;
  background:black;
+ color:#0f0;
  text-decoration:none;
- border-radius:10px;
+ width:100%;
+ box-sizing:border-box;
 }
 button{cursor:pointer}
 hr{border:1px solid #0f0}
+.search{margin-bottom:14px}
+.small-btn{width:auto;display:inline-block}
 </style>
 """
 
+# ============================================================
+# HTML
+# ============================================================
 HOME_HTML = """
 <!doctype html><html><head>{{style}}</head><body>
-<h2>📺 IPTV</h2>
+
+<!-- SEARCH -->
+<div class="search">
+<form action="/search">
+<input name="q" placeholder="🔍 Search channel..." autofocus>
+</form>
+</div>
+
+<!-- TOP CARDS -->
+<div class="top-grid">
+<a class="card" href="/random">🎲 RANDOM</a>
+<a class="card" href="/favourites">⭐ FAVOURITES</a>
+</div>
+
+<hr>
+
+<!-- CATEGORIES -->
 {% for k in playlists %}
-<a href="/list/{{k}}">{{k|upper}}</a><br><br>
+<div class="card">
+<a href="/list/{{k}}">{{k|upper}}</a>
+</div>
 {% endfor %}
-<a href="/random">🎲 RANDOM</a>
-<a href="/favourites">⭐ FAVOURITES</a>
+
 </body></html>
 """
 
 LIST_HTML = """
 <!doctype html><html><head>{{style}}</head><body>
-<h2>{{group|upper}}</h2>
 <a href="/">⬅ BACK</a><hr>
+
 {% for ch in channels %}
-<div>
+<div class="card">
 <b>{{loop.index}}. {{ch.title}}</b><br><br>
-<a href="/watch/{{group}}/{{loop.index0}}">▶ WATCH</a>
-<a href="/play-144p/{{group}}/{{loop.index0}}">📺 144P</a>
-<a href="/play-audio/{{group}}/{{loop.index0}}">🎧 AUDIO</a>
-<button onclick='fav("{{ch.title}}","{{ch.url}}")'>⭐</button>
-</div><hr>
+
+<a class="small-btn" href="/watch/{{group}}/{{loop.index0}}">▶ WATCH</a>
+<a class="small-btn" href="/play-144p/{{group}}/{{loop.index0}}">📺 144P</a>
+<a class="small-btn" href="/play-audio/{{group}}/{{loop.index0}}">🎧 AUDIO</a>
+
+<button class="small-btn" onclick='fav("{{ch.title}}","{{ch.url}}")'>⭐</button>
+</div>
 {% endfor %}
+
 <script>
 function fav(t,u){
  let f=JSON.parse(localStorage.getItem("favs")||"[]");
@@ -135,27 +170,47 @@ function fav(t,u){
 
 WATCH_HTML = """
 <!doctype html><html><head>{{style}}</head><body>
+<a href="/">⬅ BACK</a>
 <h2>{{channel.title}}</h2>
-<video controls autoplay style="width:100%;max-height:85vh;border:3px solid #0f0">
+<video controls autoplay style="width:100%;max-height:80vh;border:3px solid #0f0">
  <source src="{{channel.url}}">
 </video>
 </body></html>
 """
 
+SEARCH_HTML = """
+<!doctype html><html><head>{{style}}</head><body>
+<a href="/">⬅ BACK</a><hr>
+<h3>Results for "{{q}}"</h3>
+
+{% for ch in results %}
+<div class="card">
+<b>{{ch.title}}</b><br><br>
+<a class="small-btn" href="/watch/all/{{ch.index}}">▶</a>
+<a class="small-btn" href="/play-144p/all/{{ch.index}}">📺144P</a>
+<a class="small-btn" href="/play-audio/all/{{ch.index}}">🎧</a>
+<button class="small-btn" onclick='fav("{{ch.title}}","{{ch.url}}")'>⭐</button>
+</div>
+{% endfor %}
+</body></html>
+"""
+
 FAV_HTML = """
 <!doctype html><html><head>{{style}}</head><body>
+<a href="/">⬅ BACK</a>
 <h2>⭐ FAVOURITES</h2>
-<a href="/">⬅ BACK</a><hr>
+
 <div id="f"></div>
+
 <script>
 let f=JSON.parse(localStorage.getItem("favs")||"[]");
 let h="";
 f.forEach(c=>{
- h+=`<div><b>${c.title}</b><br><br>
- <a href="/watch-direct?u=${encodeURIComponent(c.url)}">▶</a>
- <a href="/play-144p-direct?u=${encodeURIComponent(c.url)}">📺144P</a>
- <a href="/play-audio-direct?u=${encodeURIComponent(c.url)}">🎧</a>
- </div><hr>`;
+ h+=`<div class="card"><b>${c.title}</b><br><br>
+ <a class="small-btn" href="/watch-direct?u=${encodeURIComponent(c.url)}">▶</a>
+ <a class="small-btn" href="/play-144p-direct?u=${encodeURIComponent(c.url)}">📺144P</a>
+ <a class="small-btn" href="/play-audio-direct?u=${encodeURIComponent(c.url)}">🎧</a>
+ </div>`;
 });
 document.getElementById("f").innerHTML=h;
 </script>
@@ -167,39 +222,46 @@ document.getElementById("f").innerHTML=h;
 # ============================================================
 @app.route("/")
 def home():
-    return render_template_string(HOME_HTML, playlists=PLAYLISTS, style=BASE_STYLE)
+    return render_template_string(HOME_HTML, playlists=PLAYLISTS, style=STYLE)
 
 @app.route("/list/<group>")
 def list_group(group):
     return render_template_string(
-        LIST_HTML, group=group,
+        LIST_HTML,
+        group=group,
         channels=get_channels(group),
-        style=BASE_STYLE
+        style=STYLE
     )
 
 @app.route("/random")
 def random_play():
     ch = random.choice(get_channels("all"))
-    return render_template_string(WATCH_HTML, channel=ch, style=BASE_STYLE)
+    return render_template_string(WATCH_HTML, channel=ch, style=STYLE)
 
 @app.route("/watch/<group>/<int:i>")
 def watch(group, i):
     ch = get_channels(group)[i]
-    return render_template_string(WATCH_HTML, channel=ch, style=BASE_STYLE)
+    return render_template_string(WATCH_HTML, channel=ch, style=STYLE)
+
+@app.route("/search")
+def search():
+    q = request.args.get("q","").lower()
+    res = []
+    for i,ch in enumerate(get_channels("all")):
+        if q in ch["title"].lower():
+            ch["index"] = i
+            res.append(ch)
+    return render_template_string(
+        SEARCH_HTML, q=q, results=res, style=STYLE
+    )
 
 @app.route("/play-audio/<group>/<int:i>")
 def play_audio(group, i):
-    return Response(
-        stream_with_context(proxy_audio_only(get_channels(group)[i]["url"])),
-        mimetype="audio/mpeg"
-    )
+    return Response(stream_with_context(proxy_audio_only(get_channels(group)[i]["url"])), mimetype="audio/mpeg")
 
 @app.route("/play-144p/<group>/<int:i>")
 def play_144p(group, i):
-    return Response(
-        stream_with_context(proxy_video_144p(get_channels(group)[i]["url"])),
-        mimetype="video/mp4"
-    )
+    return Response(stream_with_context(proxy_video_144p(get_channels(group)[i]["url"])), mimetype="video/mp4")
 
 @app.route("/play-audio-direct")
 def audio_direct():
@@ -213,13 +275,13 @@ def video_direct():
 def watch_direct():
     return render_template_string(
         WATCH_HTML,
-        channel={"title": "Channel", "url": request.args["u"]},
-        style=BASE_STYLE
+        channel={"title":"Channel","url":request.args["u"]},
+        style=STYLE
     )
 
 @app.route("/favourites")
 def favs():
-    return render_template_string(FAV_HTML, style=BASE_STYLE)
+    return render_template_string(FAV_HTML, style=STYLE)
 
 # ============================================================
 # RUN
