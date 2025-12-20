@@ -6,7 +6,7 @@ app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 
 # -------------------------------------------------
-# PLAYLISTS (CATEGORIES)
+# PLAYLISTS
 # -------------------------------------------------
 PLAYLISTS = {
     "India": "https://iptv-org.github.io/iptv/countries/in.m3u",
@@ -45,7 +45,7 @@ def load_playlist(url):
     return out
 
 # -------------------------------------------------
-# HTML (KEYPAD FRIENDLY + JS FAVOURITES)
+# HTML
 # -------------------------------------------------
 HTML = """
 <!doctype html>
@@ -58,23 +58,31 @@ body{background:#000;color:#0f0;font-family:Arial;padding:10px}
 h3{margin:6px 0}
 .search{display:flex;gap:6px;margin-bottom:6px}
 input{flex:1;padding:14px;font-size:18px;border:1px solid #0f0;background:#111;color:#0f0;border-radius:8px}
-button{padding:14px 18px;font-size:20px;border:1px solid #0f0;background:#111;color:#0f0;border-radius:8px}
+button{padding:14px 18px;font-size:18px;border:1px solid #0f0;background:#111;color:#0f0;border-radius:8px}
 .nav{display:flex;gap:8px;margin-bottom:12px}
 .nav a{flex:1;text-align:center;padding:14px;font-size:18px;
 border:1px solid #0f0;background:#111;color:#0f0;border-radius:8px;text-decoration:none}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px}
 .card{border:1px solid #0f0;border-radius:10px;padding:10px;background:#111;text-align:center}
 a.link{display:block;margin:6px 0;padding:10px;border:1px solid #0f0;border-radius:6px;color:#0f0;text-decoration:none}
-.small{font-size:13px;padding:6px}
+.small{font-size:13px;padding:6px;margin-top:6px}
 </style>
 
 <script>
 function favs(){return JSON.parse(localStorage.getItem("iptv_favs")||"[]")}
 function save(f){localStorage.setItem("iptv_favs",JSON.stringify(f))}
-function toggle(k){
+
+function toggle(key, title){
  let f=favs();
- f.includes(k)?f=f.filter(x=>x!=k):f.push(k);
- save(f); location.reload();
+ if(f.includes(key)){
+   if(confirm("Remove from favourites?\\n"+title)){
+     f=f.filter(x=>x!=key); save(f); location.reload();
+   }
+ }else{
+   if(confirm("Add to favourites?\\n"+title)){
+     f.push(key); save(f); alert("Added to favourites");
+   }
+ }
 }
 </script>
 </head>
@@ -107,9 +115,9 @@ function toggle(k){
 {% for i in items %}
 <div class="card">
 <b>{{ i.title }}</b>
-<a class="link" href="/watch/{{ cat }}/{{ i.idx }}">▶ Watch</a>
-<a class="link" href="/watch-low/{{ cat }}/{{ i.idx }}">🔇 144p</a>
-<button class="small" onclick="toggle('{{ cat }}|{{ i.idx }}')">⭐ Favourite</button>
+<a class="link" href="/watch/{{ i.cat }}/{{ i.idx }}">▶ Watch</a>
+<a class="link" href="/watch-low/{{ i.cat }}/{{ i.idx }}">🔇 144p</a>
+<button class="small" onclick="toggle('{{ i.cat }}|{{ i.idx }}','{{ i.title }}')">⭐ Favourite</button>
 </div>
 {% endfor %}
 </div>
@@ -120,9 +128,11 @@ function toggle(k){
 <script>
 const favBox=document.getElementById("favlist");
 const fav=favs();
+
 if(!fav.length){
  favBox.innerHTML="<p>No favourites yet</p>";
 }
+
 fav.forEach(k=>{
  const [cat,idx]=k.split("|");
  favBox.innerHTML+=`
@@ -130,7 +140,7 @@ fav.forEach(k=>{
  <b>${cat}</b>
  <a class="link" href="/watch/${cat}/${idx}">▶ Watch</a>
  <a class="link" href="/watch-low/${cat}/${idx}">🔇 144p</a>
- <button class="small" onclick="toggle('${k}')">❌ Remove</button>
+ <button class="small" onclick="toggle('${k}','${cat}')">❌ Remove</button>
  </div>`;
 });
 </script>
@@ -151,12 +161,8 @@ def home():
 @app.route("/category/<cat>")
 def category(cat):
     if cat not in PLAYLISTS: abort(404)
-    return render_template_string(
-        HTML,
-        items=load_playlist(PLAYLISTS[cat]),
-        page="list",
-        cat=cat
-    )
+    items=[c|{"cat":cat} for c in load_playlist(PLAYLISTS[cat])]
+    return render_template_string(HTML,items=items,page="list")
 
 @app.route("/search")
 def search():
@@ -165,8 +171,8 @@ def search():
     for cat,url in PLAYLISTS.items():
         for c in load_playlist(url):
             if q in c["title"].lower():
-                res.append(c)
-    return render_template_string(HTML,items=res,page="list",cat=cat)
+                res.append(c|{"cat":cat})
+    return render_template_string(HTML,items=res,page="list")
 
 @app.route("/favourites")
 def favourites():
