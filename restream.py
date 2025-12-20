@@ -5,24 +5,23 @@ import logging
 import random
 import requests
 import subprocess
-from flask import Flask, Response, render_template_string, abort, stream_with_context, request
+from flask import Flask, Response, render_template_string, abort, stream_with_context, request, send_file
 
-# ============================================================
+# =============================
 # Basic Setup
-# ============================================================
+# =============================
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 app = Flask(__name__)
 
 REFRESH_INTERVAL = 1800
 LOGO_FALLBACK = "https://iptv-org.github.io/assets/logo.png"
 
-# ============================================================
+# =============================
 # Playlists
-# ============================================================
+# =============================
 PLAYLISTS = {
     "all": "https://iptv-org.github.io/iptv/index.m3u",
     "india": "https://iptv-org.github.io/iptv/countries/in.m3u",
-    "usa": "https://iptv-org.github.io/iptv/countries/us.m3u",
     "news": "https://iptv-org.github.io/iptv/categories/news.m3u",
     "movies": "https://iptv-org.github.io/iptv/categories/movies.m3u",
     "malayalam": "https://iptv-org.github.io/iptv/languages/mal.m3u",
@@ -30,9 +29,9 @@ PLAYLISTS = {
 
 CACHE = {}
 
-# ============================================================
+# =============================
 # M3U Parser
-# ============================================================
+# =============================
 def parse_extinf(line: str):
     if "," in line:
         left, title = line.split(",", 1)
@@ -92,9 +91,9 @@ def parse_m3u(text: str):
             i += 1
     return channels
 
-# ============================================================
+# =============================
 # Cache Loader
-# ============================================================
+# =============================
 def get_channels(name: str):
     now = time.time()
     cached = CACHE.get(name)
@@ -116,18 +115,24 @@ def get_channels(name: str):
         logging.error("Load failed %s: %s", name, e)
         return []
 
-# ============================================================
-# Proxy 144p No-Audio MPEG-TS Stream
-# ============================================================
-def proxy_noaudio_ts(url: str):
+# =============================
+# HLS No-Audio Transcoder
+# =============================
+HLS_CACHE_DIR = "/tmp/hls_cache"
+os.makedirs(HLS_CACHE_DIR, exist_ok=True)
+
+def generate_hls_noaudio(url, channel_name):
+    """Generate 144p HLS no-audio for a given stream"""
+    safe_name = channel_name.replace(" ", "_")
+    out_dir = os.path.join(HLS_CACHE_DIR, safe_name)
+    os.makedirs(out_dir, exist_ok=True)
+    m3u8_file = os.path.join(out_dir, "index.m3u8")
+
     cmd = [
         "ffmpeg",
         "-loglevel", "error",
-        "-reconnect", "1",
-        "-reconnect_streamed", "1",
-        "-reconnect_delay_max", "5",
         "-i", url,
-        "-an",  # no audio
+        "-an",                        # No audio
         "-vf", "scale=256:144",
         "-r", "15",
         "-c:v", "libx264",
@@ -137,213 +142,91 @@ def proxy_noaudio_ts(url: str):
         "-maxrate", "40k",
         "-bufsize", "240k",
         "-g", "30",
-        "-f", "mpegts",
-        "pipe:1"
+        "-f", "hls",
+        "-hls_time", "2",
+        "-hls_list_size", "3",
+        "-hls_flags", "delete_segments+temp_file",
+        m3u8_file
     ]
+    # Run FFmpeg as background process
+    subprocess.Popen(cmd)
+    return m3u8_file
 
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=0)
-    try:
-        while True:
-            chunk = proc.stdout.read(4096)
-            if not chunk:
-                break
-            yield chunk
-    finally:
-        proc.terminate()
-        proc.wait()
-
-# ============================================================
-# HTML Templates
-# ============================================================
-HOME_HTML = """<!doctype html>
+# =============================
+# Routes
+# =============================
+@app.route("/")
+def home():
+    html = """<!doctype html>
 <html>
-<head>
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>IPTV Restream</title>
-<style>
-body{background:#000;color:#0f0;font-family:Arial;padding:16px}
-a{color:#0f0;text-decoration:none;border:1px solid #0f0;padding:10px;margin:8px;border-radius:8px;display:inline-block}
-a:hover{background:#0f0;color:#000}
-</style>
-</head>
+<head><meta name="viewport" content="width=device-width,initial-scale=1"><title>IPTV</title></head>
 <body>
 <h2>🌐 IPTV</h2>
 <p>Select a category:</p>
 {% for key, url in playlists.items() %}
-<a href="/list/{{ key }}">{{ key|capitalize }}</a>
+<a href="/list/{{ key }}">{{ key|capitalize }}</a><br>
 {% endfor %}
-<a href="/favourites" style="border-color:yellow;color:yellow">⭐ Favourites</a>
 </body>
 </html>"""
-
-LIST_HTML = """<!doctype html>
-<html>
-<head>
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{{ group|capitalize }} Channels</title>
-<style>
-body{background:#000;color:#0f0;font-family:Arial;padding:12px}
-.card{display:flex;align-items:center;gap:10px;border:1px solid #0f0;border-radius:8px;padding:8px;margin:8px 0;background:#111}
-.card img{width:42px;height:42px;background:#222;border-radius:6px}
-a.btn{border:1px solid #0f0;color:#0f0;padding:6px 8px;border-radius:6px;text-decoration:none;margin-right:8px}
-a.btn:hover{background:#0f0;color:#000}
-button.k{padding:6px 8px;border-radius:6px;border:1px solid #0f0;background:#111;color:#0f0;margin-left:6px}
-</style>
-</head>
-<body>
-<h3>{{ group|capitalize }} Channels</h3>
-<a href="/">← Back</a>
-<div style="margin-top:12px;">
-{% for ch in channels %}
-<div class="card" data-url="{{ ch.url }}" data-title="{{ ch.title }}">
-  <img src="{{ ch.logo or fallback }}" onerror="this.src='{{ fallback }}'">
-  <div style="flex:1">
-    <strong>{{ ch.title }}</strong>
-    <div style="margin-top:6px">
-      <a class="btn" href="/watch/{{ group }}/{{ loop.index0 }}" target="_blank">▶️ Watch</a>
-      <a class="btn" href="/stream-noaudio/{{ group }}/{{ loop.index0 }}" target="_blank">🔇 144p</a>
-      <button class="k" onclick='addFav("{{ ch.title|replace('"','&#34;') }}","{{ ch.url }}","{{ ch.logo }}")'>⭐</button>
-    </div>
-  </div>
-</div>
-{% endfor %}
-</div>
-
-<script>
-function addFav(title, url, logo){
-  let f = JSON.parse(localStorage.getItem('favs') || '[]');
-  if (!f.find(x => x.url === url)) {
-    f.push({title:title, url:url, logo:logo});
-    localStorage.setItem('favs', JSON.stringify(f));
-    alert('Added to favourites');
-  } else {
-    alert('Already in favourites');
-  }
-}
-</script>
-</body>
-</html>"""
-
-WATCH_HTML = """<!doctype html>
-<html>
-<head>
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{{ channel.title }}</title>
-<style>
-body{background:#000;color:#0f0;margin:0;font-family:Arial;padding:10px;text-align:center}
-video{width:100%;height:auto;max-height:85vh;border:2px solid #0f0;margin-top:10px}
-</style>
-</head>
-<body>
-<h3>{{ channel.title }}</h3>
-<video id="vid" controls autoplay playsinline>
-  <source src="{{ channel.url }}" type="{{ mime_type }}">
-</video>
-</body>
-</html>"""
-
-FAV_HTML = """<!doctype html>
-<html>
-<head>
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Favourites</title>
-<style>
-body{background:#000;color:#0f0;font-family:Arial;padding:12px}
-.card{display:flex;align-items:center;gap:10px;border:1px solid yellow;border-radius:8px;padding:8px;margin:8px 0;background:#111}
-.card img{width:42px;height:42px;background:#222;border-radius:6px}
-a.btn{border:1px solid yellow;color:yellow;padding:6px 8px;border-radius:6px;text-decoration:none;margin-right:8px}
-a.btn:hover{background:yellow;color:#000}
-</style>
-</head>
-<body>
-<h2>⭐ Favourites</h2>
-<a href="/">← Back</a>
-<div id="favList" style="margin-top:12px;"></div>
-<script>
-function loadFavs(){
-  let f = JSON.parse(localStorage.getItem('favs') || '[]');
-  let html = "";
-  f.forEach((c,i)=>{
-    html += `
-    <div class="card">
-      <img src="${c.logo||''}" onerror="this.src='${'""" + LOGO_FALLBACK + """'}'">
-      <div style="flex:1">
-        <strong>${c.title}</strong>
-        <div style="margin-top:6px">
-          <a class="btn" href="/watch-direct?title=${encodeURIComponent(c.title)}&url=${encodeURIComponent(c.url)}&logo=${encodeURIComponent(c.logo)}" target="_blank">▶ Watch</a>
-          <a class="btn" href="/stream-noaudio-direct?u=${encodeURIComponent(c.url)}" target="_blank">🔇 144p</a>
-        </div>
-      </div>
-    </div>`;
-  });
-  document.getElementById('favList').innerHTML = html;
-}
-loadFavs();
-</script>
-</body>
-</html>"""
-
-# ============================================================
-# Routes
-# ============================================================
-@app.route("/")
-def home():
-    return render_template_string(HOME_HTML, playlists=PLAYLISTS)
+    return render_template_string(html, playlists=PLAYLISTS)
 
 @app.route("/list/<group>")
 def list_group(group):
     if group not in PLAYLISTS:
         abort(404)
     channels = get_channels(group)
-    return render_template_string(LIST_HTML, group=group, channels=channels, fallback=LOGO_FALLBACK)
+    html = """<!doctype html>
+<html><body>
+<h3>{{ group|capitalize }} Channels</h3>
+<a href="/">← Back</a><br>
+{% for ch in channels %}
+<b>{{ ch.title }}</b> 
+[<a href="/watch/{{ group }}/{{ loop.index0 }}">Watch</a>] 
+[<a href="/stream-noaudio/{{ group }}/{{ loop.index0 }}">144p No-Audio</a>]<br>
+{% endfor %}
+</body></html>"""
+    return render_template_string(html, group=group, channels=channels)
 
 @app.route("/watch/<group>/<int:idx>")
 def watch_channel(group, idx):
-    if group not in PLAYLISTS:
-        abort(404)
     channels = get_channels(group)
     if idx < 0 or idx >= len(channels):
         abort(404)
     ch = channels[idx]
-    url = ch["url"]
-    mime = "application/vnd.apple.mpegurl" if url.endswith(".m3u8") else "video/mp4"
-    return render_template_string(WATCH_HTML, channel=ch, mime_type=mime)
+    mime = "application/vnd.apple.mpegurl" if ch["url"].endswith(".m3u8") else "video/mp4"
+    html = """<!doctype html>
+<html><body>
+<h3>{{ channel.title }}</h3>
+<video controls autoplay playsinline style="width:100%;max-height:80vh">
+<source src="{{ channel.url }}" type="{{ mime_type }}">
+</video>
+</body></html>"""
+    return render_template_string(html, channel=ch, mime_type=mime)
 
 @app.route("/stream-noaudio/<group>/<int:idx>")
 def stream_noaudio(group, idx):
-    if group not in PLAYLISTS:
-        abort(404)
     channels = get_channels(group)
     if idx < 0 or idx >= len(channels):
         abort(404)
-    url = channels[idx]["url"]
-    return Response(stream_with_context(proxy_noaudio_ts(url)), mimetype="video/mp2t", headers={"Access-Control-Allow-Origin": "*"})
+    ch = channels[idx]
+    m3u8_file = generate_hls_noaudio(ch["url"], ch["title"])
+    # Serve HLS playlist
+    return send_file(m3u8_file, mimetype="application/vnd.apple.mpegurl")
 
-@app.route("/favourites")
-def favourites():
-    return render_template_string(FAV_HTML)
-
-@app.route("/watch-direct")
-def watch_direct():
-    title = request.args.get("title", "Channel")
-    url = request.args.get("url")
-    logo = request.args.get("logo", "")
-    if not url:
-        return "Invalid URL", 400
-    mime = "application/vnd.apple.mpegurl" if url.endswith(".m3u8") else "video/mp4"
-    channel = {"title": title, "url": url, "logo": logo}
-    return render_template_string(WATCH_HTML, channel=channel, mime_type=mime)
-
-@app.route("/stream-noaudio-direct")
-def stream_noaudio_direct():
-    url = request.args.get("u")
-    if not url:
+# =============================
+# Serve HLS TS segments
+# =============================
+@app.route("/hls/<channel>/<path:filename>")
+def hls_segments(channel, filename):
+    safe_name = channel.replace(" ", "_")
+    path = os.path.join(HLS_CACHE_DIR, safe_name, filename)
+    if not os.path.isfile(path):
         abort(404)
-    return Response(stream_with_context(proxy_noaudio_ts(url)), mimetype="video/mp2t", headers={"Access-Control-Allow-Origin": "*"})
+    return send_file(path)
 
-# ============================================================
-# Entry
-# ============================================================
+# =============================
+# Run Flask
+# =============================
 if __name__ == "__main__":
-    print("Running IPTV Restream on http://0.0.0.0:8000")
-    app.run(host="0.0.0.0", port=8000, debug=False, threaded=True)
+    print("IPTV HLS Restream running on http://0.0.0.0:8000")
+    app.run(host="0.0.0.0", port=8000, threaded=True)
