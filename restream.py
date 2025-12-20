@@ -5,9 +5,6 @@ import subprocess
 import requests
 from flask import Flask, Response, render_template_string, abort, stream_with_context
 
-# -------------------------------------------------
-# BASIC SETUP
-# -------------------------------------------------
 logging.basicConfig(level=logging.INFO)
 app = Flask(__name__)
 
@@ -74,6 +71,8 @@ a:hover{background:#0f0;color:#000}
 {% for k in playlists %}
 <a href="/list/{{ k }}">{{ k }}</a>
 {% endfor %}
+<br><br>
+<a href="/favourites" style="border-color:yellow;color:yellow">⭐ Favourites</a>
 </body>
 </html>
 """
@@ -87,8 +86,10 @@ LIST_HTML = """
 <style>
 body{background:#000;color:#0f0;font-family:Arial;padding:12px}
 .card{border:1px solid #0f0;border-radius:10px;padding:10px;margin:8px 0;background:#111}
-a{display:inline-block;margin:4px;padding:6px 10px;
-border:1px solid #0f0;border-radius:6px;color:#0f0;text-decoration:none}
+a,button{display:inline-block;margin:4px;padding:6px 10px;
+border:1px solid #0f0;border-radius:6px;color:#0f0;
+background:#111;text-decoration:none}
+button{cursor:pointer}
 </style>
 </head>
 <body>
@@ -100,8 +101,22 @@ border:1px solid #0f0;border-radius:6px;color:#0f0;text-decoration:none}
 <b>{{ c.title }}</b><br>
 <a href="/watch/{{ cat }}/{{ loop.index0 }}">▶ Watch</a>
 <a href="/low/{{ cat }}/{{ loop.index0 }}">🔇 Low</a>
+<button onclick='addFav("{{ c.title|replace('"','&#34;') }}","{{ c.url }}")'>⭐</button>
 </div>
 {% endfor %}
+
+<script>
+function addFav(title, url){
+  let f = JSON.parse(localStorage.getItem("favs") || "[]");
+  if(!f.find(x => x.url === url)){
+    f.push({title:title, url:url});
+    localStorage.setItem("favs", JSON.stringify(f));
+    alert("Added to favourites");
+  } else {
+    alert("Already added");
+  }
+}
+</script>
 </body>
 </html>
 """
@@ -125,6 +140,54 @@ video{width:100%;height:100vh;background:#000}
 </html>
 """
 
+FAV_HTML = """
+<!doctype html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Favourites</title>
+<style>
+body{background:#000;color:yellow;font-family:Arial;padding:12px}
+.card{border:1px solid yellow;border-radius:10px;padding:10px;margin:8px 0;background:#111}
+a,button{margin:4px;padding:6px 10px;
+border:1px solid yellow;border-radius:6px;
+color:yellow;background:#111;text-decoration:none}
+button{cursor:pointer}
+</style>
+</head>
+<body>
+<a href="/">⬅ Back</a>
+<h3>⭐ Favourites</h3>
+
+<div id="list"></div>
+
+<script>
+function loadFavs(){
+  let f = JSON.parse(localStorage.getItem("favs") || "[]");
+  let html = "";
+  f.forEach((c,i)=>{
+    html += `
+      <div class="card">
+        <b>${c.title}</b><br>
+        <a href="/watch-direct?u=${encodeURIComponent(c.url)}">▶ Watch</a>
+        <a href="/low-direct?u=${encodeURIComponent(c.url)}">🔇 Low</a>
+        <button onclick="del(${i})">❌</button>
+      </div>`;
+  });
+  document.getElementById("list").innerHTML = html;
+}
+function del(i){
+  let f = JSON.parse(localStorage.getItem("favs"));
+  f.splice(i,1);
+  localStorage.setItem("favs",JSON.stringify(f));
+  loadFavs();
+}
+loadFavs();
+</script>
+</body>
+</html>
+"""
+
 # -------------------------------------------------
 # ROUTES
 # -------------------------------------------------
@@ -141,6 +204,10 @@ def list_cat(cat):
         cat=cat,
         channels=load_channels(cat)
     )
+
+@app.route("/favourites")
+def favourites():
+    return render_template_string(FAV_HTML)
 
 # -------- RAW M3U8 --------
 @app.route("/watch/<cat>/<int:idx>")
@@ -179,38 +246,63 @@ def stream_low(cat, idx):
         abort(404)
 
     cmd = [
-        "ffmpeg",
-        "-loglevel", "error",
-        "-reconnect", "1",
-        "-reconnect_streamed", "1",
-        "-reconnect_delay_max", "5",
+        "ffmpeg","-loglevel","error",
+        "-reconnect","1","-reconnect_streamed","1","-reconnect_delay_max","5",
         "-i", ch[idx]["url"],
         "-an",
-        "-vf", "scale=256:144",
-        "-r", "12",
-        "-c:v", "libx264",
-        "-profile:v", "baseline",
-        "-preset", "ultrafast",
-        "-tune", "zerolatency",
-        "-b:v", "40k",
-        "-maxrate", "40k",
-        "-bufsize", "80k",
-        "-g", "12",
-        "-f", "mpegts",
-        "pipe:1"
+        "-vf","scale=256:144",
+        "-r","12",
+        "-c:v","libx264",
+        "-profile:v","baseline",
+        "-preset","ultrafast",
+        "-tune","zerolatency",
+        "-b:v","40k","-maxrate","40k","-bufsize","80k",
+        "-g","12",
+        "-f","mpegts","pipe:1"
     ]
 
     def gen():
         p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         try:
             while True:
-                data = p.stdout.read(4096)
-                if not data:
+                d = p.stdout.read(4096)
+                if not d:
                     break
-                yield data
+                yield d
         finally:
             p.kill()
 
+    return Response(stream_with_context(gen()), mimetype="video/mp2t")
+
+# -------- DIRECT FAV PLAY --------
+@app.route("/watch-direct")
+def watch_direct():
+    u = requests.utils.unquote(request.args.get("u",""))
+    return render_template_string(
+        WATCH_HTML,
+        channel={"title":"Favourite","url":u},
+        mime="application/vnd.apple.mpegurl"
+    )
+
+@app.route("/low-direct")
+def low_direct():
+    u = requests.utils.unquote(request.args.get("u",""))
+    cmd = [
+        "ffmpeg","-loglevel","error",
+        "-i",u,"-an","-vf","scale=256:144","-r","12",
+        "-c:v","libx264","-b:v","40k",
+        "-f","mpegts","pipe:1"
+    ]
+    def gen():
+        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        try:
+            while True:
+                d = p.stdout.read(4096)
+                if not d:
+                    break
+                yield d
+        finally:
+            p.kill()
     return Response(stream_with_context(gen()), mimetype="video/mp2t")
 
 # -------------------------------------------------
