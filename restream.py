@@ -36,7 +36,7 @@ def load_channels():
     return channels
 
 # -------------------------------------------------
-# UI
+# UI TEMPLATE
 # -------------------------------------------------
 HOME_HTML = """
 <!doctype html>
@@ -46,20 +46,25 @@ HOME_HTML = """
 <title>IPTV</title>
 <style>
 body{background:#000;color:#0f0;font-family:Arial;padding:10px}
-input{width:100%;padding:8px;margin-bottom:10px;border-radius:6px;border:1px solid #0f0;background:#111;color:#0f0}
+form{display:flex;margin-bottom:10px}
+input{flex:1;padding:8px;border-radius:6px;border:1px solid #0f0;background:#111;color:#0f0}
+button{padding:0 12px;margin-left:4px;border-radius:6px;border:1px solid #0f0;background:#111;color:#0f0;font-size:16px;cursor:pointer}
+button:hover{background:#0f0;color:#000}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px}
 .card{border:1px solid #0f0;border-radius:10px;padding:10px;background:#111}
 .card h4{margin:0 0 10px 0;font-size:14px}
 a{display:block;margin:6px 0;padding:6px 8px;border:1px solid #0f0;border-radius:6px;color:#0f0;text-decoration:none;text-align:center}
 a:hover{background:#0f0;color:#000}
 .fav-btn{font-size:12px;padding:2px 4px;margin-top:4px}
+.back-btn{margin-bottom:10px;display:inline-block;padding:6px 8px;border:1px solid #0f0;border-radius:6px;color:#0f0;text-decoration:none}
 </style>
 </head>
 <body>
 <h3>📺 IPTV Streaming</h3>
 
-<form method="get" action="/">
+<form method="get" action="/search">
 <input type="text" name="q" placeholder="Search channels..." value="{{ query|default('') }}">
+<button type="submit">🔍</button>
 </form>
 
 {% if favourites %}
@@ -76,19 +81,31 @@ a:hover{background:#0f0;color:#000}
 </div>
 {% endif %}
 
-<h4>All Channels</h4>
+{% if query is defined %}
+<a class="back-btn" href="/">⬅ Back to all channels</a>
+{% endif %}
+
+{% if channels %}
+<h4>{{ query|default('All Channels') }}</h4>
 <div class="grid">
 {% for c in channels %}
 <div class="card">
 <h4>{{ c.title }}</h4>
 <a href="/watch/{{ c.idx }}">▶ Watch (Original)</a>
 <a href="/watch-low/{{ c.idx }}">🔇 Watch 144p</a>
-{% if c.idx in fav_ids %}
+{% if c.idx not in fav_ids %}
 <a class="fav-btn" href="/toggle_fav/{{ c.idx }}">⭐ Add to fav</a>
+{% else %}
+<a class="fav-btn" href="/toggle_fav/{{ c.idx }}">❌ Remove from fav</a>
 {% endif %}
 </div>
 {% endfor %}
 </div>
+{% else %}
+{% if query is defined %}
+<p>No results found for "{{ query }}"</p>
+{% endif %}
+{% endif %}
 
 </body>
 </html>
@@ -118,15 +135,10 @@ video{width:100%;height:100vh;background:#000}
 # -------------------------------------------------
 @app.route("/")
 def home():
-    query = request.args.get("q", "").lower()
     channels = load_channels()
-    channels_with_idx = [{"idx": i, "title": c["title"], "url": c["url"]} for i, c in enumerate(channels)]
+    channels_with_idx = [{"idx": i, "title": c["title"], "url": c["url"]} 
+                         for i, c in enumerate(channels)]
 
-    # Filter channels by search query
-    if query:
-        channels_with_idx = [c for c in channels_with_idx if query in c["title"].lower()]
-
-    # Prepare favourites
     fav_list = [{"idx": i, "title": channels[i]["title"], "url": channels[i]["url"]}
                 for i in FAVOURITES if i < len(channels)]
 
@@ -134,9 +146,24 @@ def home():
         HOME_HTML,
         channels=channels_with_idx,
         fav_ids=FAVOURITES,
-        favourites=fav_list,
-        query=query
+        favourites=fav_list
     )
+
+@app.route("/search")
+def search():
+    query = request.args.get("q", "").strip().lower()
+    if not query:
+        return redirect("/")
+
+    channels = load_channels()
+    matched = [{"idx": i, "title": c["title"], "url": c["url"]} 
+               for i, c in enumerate(channels) if query in c["title"].lower()]
+
+    return render_template_string(HOME_HTML,
+                                  channels=matched,
+                                  fav_ids=FAVOURITES,
+                                  favourites=[],
+                                  query=query)
 
 @app.route("/toggle_fav/<int:idx>")
 def toggle_fav(idx):
