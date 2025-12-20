@@ -8,9 +8,6 @@ app = Flask(__name__)
 CACHE = {}
 CACHE_TTL = 1800
 
-# -------------------------------------------------
-# PLAYLISTS
-# -------------------------------------------------
 PLAYLISTS = {
     "india": "https://iptv-org.github.io/iptv/countries/in.m3u",
     "news": "https://iptv-org.github.io/iptv/categories/news.m3u",
@@ -34,11 +31,18 @@ def load_channels(cat):
         if lines[i].startswith("#EXTINF") and i + 1 < len(lines):
             ch.append({
                 "title": lines[i].split(",",1)[-1],
-                "url": lines[i+1]
+                "url": lines[i+1],
+                "cat": cat
             })
 
     CACHE[cat] = {"time": now, "channels": ch}
     return ch
+
+def all_channels():
+    a=[]
+    for c in PLAYLISTS:
+        a.extend(load_channels(c))
+    return a
 
 # -------------------------------------------------
 HOME_HTML = """
@@ -47,63 +51,47 @@ HOME_HTML = """
 <meta name=viewport content="width=device-width,initial-scale=1">
 <style>
 body{background:#000;color:#0f0;font-family:Arial;padding:14px}
-a{display:inline-block;margin:6px;padding:10px 14px;
-border:1px solid #0f0;border-radius:10px;color:#0f0;text-decoration:none}
-</style></head><body>
-<h3>📂 Categories</h3>
+input{width:100%;padding:8px;border-radius:6px;margin:6px 0}
+a,button{display:inline-block;margin:6px;padding:10px 14px;
+border:1px solid #0f0;border-radius:10px;
+background:#111;color:#0f0;text-decoration:none}
+.card{border:1px solid #0f0;border-radius:10px;padding:10px;margin:8px 0}
+</style></head>
+<body>
+
+<h3>📺 IPTV</h3>
+
+<input placeholder="🔍 Search all channels..." onkeyup="filter(this.value)">
+
+<button onclick="randomPlay()">🔀 Random Play</button>
+<a href="/favourites" style="border-color:yellow;color:yellow">⭐ Favourites</a>
+
+<h4>📂 Categories</h4>
 {% for k in playlists %}
 <a href="/list/{{k}}">{{k}}</a>
 {% endfor %}
-<br><br>
-<a href="/favourites" style="color:yellow;border-color:yellow">⭐ Favourites</a>
-</body></html>
-"""
 
-LIST_HTML = """
-<!doctype html>
-<html><head>
-<meta name=viewport content="width=device-width,initial-scale=1">
-<style>
-body{background:#000;color:#0f0;font-family:Arial;padding:12px}
-.card{border:1px solid #0f0;border-radius:10px;padding:10px;margin:8px 0;background:#111}
-input{width:100%;padding:8px;margin:6px 0;border-radius:6px}
-a,button{margin:4px;padding:6px 10px;border:1px solid #0f0;
-border-radius:6px;background:#111;color:#0f0}
-</style></head>
-<body>
-<a href="/">⬅ Back</a>
-<h3>{{cat}}</h3>
-
-<input placeholder="🔍 Search channel..." onkeyup="filter(this.value)">
-
-<button onclick="randomPlay()">🔀 Random Play</button>
-
-<div id="list">
+<div id="results">
 {% for c in channels %}
 <div class="card item">
-<b class="title">{{c.title}}</b><br>
-<a href="/watch/{{cat}}/{{loop.index0}}">▶ Watch</a>
-<a href="/low/{{cat}}/{{loop.index0}}">🔇 Low</a>
-<button onclick='fav("{{c.title|replace('"','')}}","{{c.url}}")'>⭐</button>
+<b>{{c.title}}</b> ({{c.cat}})<br>
+<a href="/watch-direct?u={{c.url}}">▶</a>
+<a href="/low-direct?u={{c.url}}">🔇</a>
 </div>
 {% endfor %}
 </div>
 
 <script>
+let items=document.querySelectorAll(".item");
 function filter(q){
  q=q.toLowerCase();
- document.querySelectorAll(".item").forEach(c=>{
-  c.style.display=c.innerText.toLowerCase().includes(q)?"":"none";
+ items.forEach(i=>{
+  i.style.display=i.innerText.toLowerCase().includes(q)?"":"none";
  });
 }
-function fav(t,u){
- let f=JSON.parse(localStorage.getItem("favs")||"[]");
- if(!f.find(x=>x.url==u)){f.push({title:t,url:u});localStorage.setItem("favs",JSON.stringify(f));alert("Added");}
-}
 function randomPlay(){
- let cards=document.querySelectorAll(".item");
- let r=Math.floor(Math.random()*cards.length);
- cards[r].querySelector("a").click();
+ let v=[...items].filter(i=>i.style.display!=="none");
+ v[Math.floor(Math.random()*v.length)].querySelector("a").click();
 }
 </script>
 </body></html>
@@ -151,42 +139,35 @@ function del(i){f.splice(i,1);localStorage.setItem("favs",JSON.stringify(f));loc
 
 # -------------------------------------------------
 @app.route("/")
-def home(): return render_template_string(HOME_HTML, playlists=PLAYLISTS)
+def home():
+    return render_template_string(
+        HOME_HTML,
+        playlists=PLAYLISTS,
+        channels=all_channels()
+    )
 
 @app.route("/list/<cat>")
 def list_cat(cat):
-    return render_template_string(LIST_HTML, cat=cat, channels=load_channels(cat))
+    return render_template_string(
+        HOME_HTML,
+        playlists=PLAYLISTS,
+        channels=load_channels(cat)
+    )
 
 @app.route("/favourites")
 def fav(): return render_template_string(FAV_HTML)
 
-@app.route("/watch/<cat>/<int:i>")
-def watch(cat,i):
-    c=load_channels(cat)[i]
-    return render_template_string(WATCH_HTML,url=c["url"],mime="application/vnd.apple.mpegurl")
-
-@app.route("/low/<cat>/<int:i>")
-def low(cat,i):
-    return render_template_string(WATCH_HTML,url=f"/stream/{cat}/{i}",mime="video/mp2t")
-
-@app.route("/stream/<cat>/<int:i>")
-def stream(cat,i):
-    u=load_channels(cat)[i]["url"]
-    cmd=["ffmpeg","-loglevel","error","-i",u,"-an","-vf","scale=256:144",
-         "-r","12","-b:v","40k","-f","mpegts","pipe:1"]
-    def g():
-        p=subprocess.Popen(cmd,stdout=subprocess.PIPE)
-        while d:=p.stdout.read(4096): yield d
-    return Response(stream_with_context(g()),mimetype="video/mp2t")
-
 @app.route("/watch-direct")
 def wd():
-    return render_template_string(WATCH_HTML,url=request.args["u"],mime="application/vnd.apple.mpegurl")
+    return render_template_string(WATCH_HTML,
+        url=request.args["u"],
+        mime="application/vnd.apple.mpegurl")
 
 @app.route("/low-direct")
 def ld():
     u=request.args["u"]
-    cmd=["ffmpeg","-loglevel","error","-i",u,"-an","-vf","scale=256:144","-b:v","40k","-f","mpegts","pipe:1"]
+    cmd=["ffmpeg","-loglevel","error","-i",u,"-an","-vf","scale=256:144",
+         "-r","12","-b:v","40k","-f","mpegts","pipe:1"]
     def g():
         p=subprocess.Popen(cmd,stdout=subprocess.PIPE)
         while d:=p.stdout.read(4096): yield d
