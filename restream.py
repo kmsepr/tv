@@ -166,33 +166,31 @@ def get_channels(name: str):
 # ============================================================
 def proxy_audio_only(source_url: str):
     cmd = [
-            "ffmpeg", "-i", url,
-            "-vn",          # no video
-            "-ac", "1",     # mono
-            "-b:a", "40k",  # 40kbps
-            "-f", "mp3",
-            "pipe:1"
-        ]
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-        try:
-            # Stream in chunks of 1024 bytes
-            for chunk in iter(lambda: proc.stdout.read(1024), b''):
-                if not chunk:
-                    break
-                yield chunk
-        finally:
-            proc.terminate()
-            proc.wait()
+        "ffmpeg",
+        "-loglevel", "error",
+        "-i", source_url,
+        "-vn",          # no video
+        "-ac", "1",     # mono
+        "-b:a", "40k",  # 40 kbps
+        "-f", "mp3",
+        "pipe:1"
+    ]
 
-    # Return a streaming response
-    return Response(
-        generate(),
-        mimetype="audio/mpeg",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-        }
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL
     )
+
+    try:
+        while True:
+            chunk = proc.stdout.read(1024)
+            if not chunk:
+                break
+            yield chunk
+    finally:
+        proc.terminate()
+        proc.wait()
 
 # ============================================================
 # HTML TEMPLATES
