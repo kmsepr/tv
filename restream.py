@@ -118,28 +118,21 @@ def get_channels(name: str):
 # ==============================
 def proxy_noaudio_hls(url):
     cmd = [
-        "ffmpeg",
-        "-loglevel", "error",
-        "-reconnect", "1",
-        "-reconnect_streamed", "1",
-        "-reconnect_delay_max", "5",
-        "-i", url,
-        "-an",  # NO AUDIO
-        "-vf", "scale=256:144",
-        "-r", "15",
-        "-c:v", "libx264",
-        "-preset", "ultrafast",
-        "-tune", "zerolatency",
-        "-b:v", "40k",
-        "-maxrate", "40k",
-        "-bufsize", "240k",
-        "-g", "30",
-        "-f", "hls",
-        "-hls_time", "4",
-        "-hls_list_size", "6",
-        "-hls_flags", "delete_segments+temp_file",
-        "pipe:1"
-    ]
+    "ffmpeg",
+    "-i", url,
+    "-vf", "scale=256:144",
+    "-r", "15",
+    "-c:v", "libx264",
+    "-preset", "ultrafast",
+    "-tune", "zerolatency",
+    "-b:v", "40k",
+    "-maxrate", "40k",
+    "-bufsize", "240k",
+    "-g", "30",
+    "-an",               # no audio
+    "-f", "mpegts",          
+    "pipe:1"
+     ]
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=0)
     try:
         while True:
