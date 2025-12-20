@@ -1,66 +1,41 @@
 #!/usr/bin/env python3
-import os
-import time
-import logging
-import random
-import requests
-import subprocess
+import os, time, logging, random, requests, subprocess
 from flask import Flask, Response, render_template_string, abort, stream_with_context, request
 
-# ============================================================
-# Basic Setup
-# ============================================================
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+# =============================
+# Setup
+# =============================
+logging.basicConfig(level=logging.INFO)
 app = Flask(__name__)
+PORT = 8000
 
 REFRESH_INTERVAL = 1800
 LOGO_FALLBACK = "https://iptv-org.github.io/assets/logo.png"
 
-# ============================================================
-# PLAYLISTS
-# ============================================================
+# =============================
+# Playlists
+# =============================
 PLAYLISTS = {
     "all": "https://iptv-org.github.io/iptv/index.m3u",
     "india": "https://iptv-org.github.io/iptv/countries/in.m3u",
     "usa": "https://iptv-org.github.io/iptv/countries/us.m3u",
     "uk": "https://iptv-org.github.io/iptv/countries/uk.m3u",
     "uae": "https://iptv-org.github.io/iptv/countries/ae.m3u",
-    "saudi": "https://iptv-org.github.io/iptv/countries/sa.m3u",
-    "pakistan": "https://iptv-org.github.io/iptv/countries/pk.m3u",
     "news": "https://iptv-org.github.io/iptv/categories/news.m3u",
     "sports": "https://iptv-org.github.io/iptv/categories/sports.m3u",
     "movies": "https://iptv-org.github.io/iptv/categories/movies.m3u",
     "music": "https://iptv-org.github.io/iptv/categories/music.m3u",
     "kids": "https://iptv-org.github.io/iptv/categories/kids.m3u",
-    "entertainment": "https://iptv-org.github.io/iptv/categories/entertainment.m3u",
-    "english":   "https://iptv-org.github.io/iptv/languages/eng.m3u",
-    "hindi":     "https://iptv-org.github.io/iptv/languages/hin.m3u",
-    "tamil":     "https://iptv-org.github.io/iptv/languages/tam.m3u",
-    "telugu":    "https://iptv-org.github.io/iptv/languages/tel.m3u",
     "malayalam": "https://iptv-org.github.io/iptv/languages/mal.m3u",
-    "kannada":   "https://iptv-org.github.io/iptv/languages/kan.m3u",
-    "marathi":   "https://iptv-org.github.io/iptv/languages/mar.m3u",
-    "gujarati":  "https://iptv-org.github.io/iptv/languages/guj.m3u",
-    "bengali":   "https://iptv-org.github.io/iptv/languages/ben.m3u",
-    "punjabi":   "https://iptv-org.github.io/iptv/languages/pan.m3u",
-    "arabic":  "https://iptv-org.github.io/iptv/languages/ara.m3u",
-    "urdu":    "https://iptv-org.github.io/iptv/languages/urd.m3u",
-    "french":  "https://iptv-org.github.io/iptv/languages/fra.m3u",
-    "spanish": "https://iptv-org.github.io/iptv/languages/spa.m3u",
-    "german":  "https://iptv-org.github.io/iptv/languages/deu.m3u",
-    "turkish": "https://iptv-org.github.io/iptv/languages/tur.m3u",
-    "russian": "https://iptv-org.github.io/iptv/languages/rus.m3u",
-    "chinese": "https://iptv-org.github.io/iptv/languages/zho.m3u",
-    "japanese":"https://iptv-org.github.io/iptv/languages/jpn.m3u",
-    "korean":  "https://iptv-org.github.io/iptv/languages/kor.m3u",
+    "english": "https://iptv-org.github.io/iptv/languages/eng.m3u"
 }
 
 CACHE = {}
 
-# ============================================================
+# =============================
 # M3U Parser
-# ============================================================
-def parse_extinf(line: str):
+# =============================
+def parse_extinf(line):
     if "," in line:
         left, title = line.split(",", 1)
     else:
@@ -71,155 +46,148 @@ def parse_extinf(line: str):
         eq = left.find("=", pos)
         if eq == -1: break
         key_end = eq
-        key_start = left.rfind(" ", 0, key_end)
-        colon = left.rfind(":", 0, key_end)
-        if colon > key_start: key_start = colon
-        key = left[key_start + 1:key_end].strip()
-        if eq + 1 < len(left) and left[eq + 1] == '"':
-            val_start = eq + 2
+        key_start = max(left.rfind(" ", 0, key_end), left.rfind(":", 0, key_end))
+        key = left[key_start+1:key_end].strip()
+        if eq+1 < len(left) and left[eq+1] == '"':
+            val_start = eq+2
             val_end = left.find('"', val_start)
             if val_end == -1: break
             val = left[val_start:val_end]
-            pos = val_end + 1
+            pos = val_end+1
         else:
-            val_end = left.find(" ", eq + 1)
-            if val_end == -1: val_end = len(left)
-            val = left[eq + 1:val_end].strip()
+            val_end = left.find(" ", eq+1)
+            if val_end == -1: val_end=len(left)
+            val = left[eq+1:val_end].strip()
             pos = val_end
-        attrs[key] = val
+        attrs[key]=val
     return attrs, title.strip()
 
-def parse_m3u(text: str):
+def parse_m3u(text):
     lines = [l.strip() for l in text.splitlines() if l.strip()]
-    channels = []
-    i = 0
-    while i < len(lines):
+    channels=[]
+    i=0
+    while i<len(lines):
         if lines[i].startswith("#EXTINF"):
-            attrs, title = parse_extinf(lines[i])
-            j = i + 1
-            url = None
-            while j < len(lines):
+            attrs,title=parse_extinf(lines[i])
+            j=i+1
+            url=None
+            while j<len(lines):
                 if not lines[j].startswith("#"):
-                    url = lines[j]
+                    url=lines[j]
                     break
-                j += 1
+                j+=1
             if url:
                 channels.append({
                     "title": title or attrs.get("tvg-name") or "Unknown",
                     "url": url,
                     "logo": attrs.get("tvg-logo") or "",
                     "group": attrs.get("group-title") or "",
-                    "tvg_id": attrs.get("tvg-id") or "",
+                    "tvg_id": attrs.get("tvg-id") or ""
                 })
-            i = j + 1
+            i=j+1
         else:
-            i += 1
+            i+=1
     return channels
 
-# ============================================================
+# =============================
 # Cache loader
-# ============================================================
-def get_channels(name: str):
-    now = time.time()
-    cached = CACHE.get(name)
-    if cached and now - cached.get("time", 0) < REFRESH_INTERVAL:
+# =============================
+def get_channels(name):
+    now=time.time()
+    cached=CACHE.get(name)
+    if cached and now-cached.get("time",0)<REFRESH_INTERVAL:
         return cached["channels"]
-    url = PLAYLISTS.get(name)
-    if not url:
-        logging.error("Playlist not found: %s", name)
-        return []
+    url=PLAYLISTS.get(name)
+    if not url: return []
     try:
-        resp = requests.get(url, timeout=25)
+        resp=requests.get(url, timeout=25)
         resp.raise_for_status()
-        channels = parse_m3u(resp.text)
-        CACHE[name] = {"time": now, "channels": channels}
+        channels=parse_m3u(resp.text)
+        CACHE[name]={"time":now,"channels":channels}
         return channels
-    except Exception as e:
-        logging.error("Load failed %s: %s", name, e)
-        return []
+    except: return []
 
-# ============================================================
-# Audio proxy
-# ============================================================
-def proxy_audio_only(source_url: str):
-    cmd = [
-        "ffmpeg", "-loglevel", "error",
-        "-fflags", "+nobuffer",
-        "-flags", "low_delay",
-        "-reconnect", "1",
-        "-reconnect_streamed", "1",
-        "-reconnect_delay_max", "5",
-        "-i", source_url,
-        "-vn", "-ac", "1", "-ar", "22050", "-b:a", "40k", "-bufsize", "256k",
-        "-f", "mp3", "pipe:1"
-    ]
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=0)
-    try:
-        while True:
-            chunk = proc.stdout.read(4096)
-            if not chunk:
-                break
-            yield chunk
-    finally:
-        proc.terminate()
-        proc.wait()
+# =============================
+# Templates
+# =============================
+# Only WATCH_HTML, LIST_HTML, HOME_HTML, FAV_HTML, SEARCH_HTML remain
+# Remove Audio buttons in LIST_HTML, FAV_HTML, SEARCH_HTML
+# Keep 144p button
 
-# ============================================================
-# Routes and HTML
-# ============================================================
+# =============================
+# Routes
+# =============================
 @app.route("/")
-def home():
-    html = "<h1>IPTV</h1>"
-    html += "<p>Select category:</p>"
-    for key in PLAYLISTS.keys():
-        html += f'<a href="/list/{key}">{key.capitalize()}</a> '
-    html += '<br><a href="/favourites">⭐ Favourites</a> '
-    html += '<a href="/random">🎲 Random Channel</a>'
-    return html
+def home(): return render_template_string(HOME_HTML, playlists=PLAYLISTS)
 
 @app.route("/list/<group>")
 def list_group(group):
     if group not in PLAYLISTS: abort(404)
-    channels = get_channels(group)
-    html = f"<h2>{group.capitalize()} Channels</h2>"
-    html += '<a href="/">← Back</a> <a href="/random/'+group+'">🎲 Random</a><br>'
-    for idx,ch in enumerate(channels):
-        html += f"{idx+1}. {ch['title']} "
-        html += f'<a href="/watch/{group}/{idx}" target="_blank">▶ Watch</a> '
-        html += f'<a href="/play-audio/{group}/{idx}" target="_blank">🎧 Audio</a><br>'
-    return html
+    channels=get_channels(group)
+    return render_template_string(LIST_HTML, group=group, channels=channels, fallback=LOGO_FALLBACK)
+
+@app.route("/favourites")
+def favourites(): return render_template_string(FAV_HTML)
+
+@app.route("/search")
+def search():
+    q=request.args.get("q","").strip().lower()
+    results=[]
+    if q:
+        all_ch=get_channels("all")
+        for idx,ch in enumerate(all_ch):
+            if q in (ch.get("title") or "").lower() or q in (ch.get("group") or "").lower():
+                results.append({"index":idx,"title":ch.get("title"),"url":ch.get("url"),"logo":ch.get("logo")})
+    return render_template_string(SEARCH_HTML, query=q, results=results)
+
+@app.route("/random")
+def random_global():
+    ch=random.choice(get_channels("all"))
+    mime="application/vnd.apple.mpegurl" if ".m3u8" in ch["url"] else "video/mp4"
+    return render_template_string(WATCH_HTML, channel=ch, mime_type=mime)
 
 @app.route("/watch/<group>/<int:idx>")
 def watch_channel(group, idx):
-    if group not in PLAYLISTS: abort(404)
-    channels = get_channels(group)
-    if idx<0 or idx>=len(channels): abort(404)
-    ch = channels[idx]
-    return f'<h2>{ch["title"]}</h2><video controls autoplay width="100%" src="{ch["url"]}"></video>'
+    chs=get_channels(group)
+    if idx<0 or idx>=len(chs): abort(404)
+    ch=chs[idx]
+    mime="application/vnd.apple.mpegurl" if ".m3u8" in ch["url"] else "video/mp4"
+    return render_template_string(WATCH_HTML, channel=ch, mime_type=mime)
 
-@app.route("/play-audio/<group>/<int:idx>")
-def play_audio(group, idx):
-    if group not in PLAYLISTS: abort(404)
-    channels = get_channels(group)
-    if idx<0 or idx>=len(channels): abort(404)
-    ch = channels[idx]
-    return Response(stream_with_context(proxy_audio_only(ch["url"])), mimetype="audio/mpeg")
+@app.route("/watch-direct")
+def watch_direct():
+    title=request.args.get("title","Channel")
+    url=request.args.get("url")
+    logo=request.args.get("logo","")
+    if not url: return "Invalid URL",400
+    ch={"title":title,"url":url,"logo":logo}
+    mime="application/vnd.apple.mpegurl" if ".m3u8" in url else "video/mp4"
+    return render_template_string(WATCH_HTML, channel=ch, mime_type=mime)
 
-@app.route("/random")
-@app.route("/random/<group>")
-def random_channel(group="all"):
-    channels = get_channels(group)
-    if not channels: abort(404)
-    ch = random.choice(channels)
-    return f'<h2>Random: {ch["title"]}</h2><video controls autoplay width="100%" src="{ch["url"]}"></video>'
+@app.route("/stream-noaudio/<group>/<int:idx>")
+def stream_noaudio(group, idx):
+    chs=get_channels(group)
+    if idx<0 or idx>=len(chs): abort(404)
+    url=chs[idx]["url"]
+    cmd=[
+        "ffmpeg","-loglevel","error",
+        "-i",url,"-an","-vf","scale=256:144","-r","15",
+        "-c:v","libx264","-preset","ultrafast","-tune","zerolatency",
+        "-b:v","40k","-maxrate","40k","-bufsize","240k","-g","30","-f","mpegts","pipe:1"
+    ]
+    def gen():
+        proc=subprocess.Popen(cmd,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,bufsize=0)
+        try:
+            while True:
+                chunk=proc.stdout.read(4096)
+                if not chunk: break
+                yield chunk
+        finally: proc.terminate(); proc.wait()
+    return Response(stream_with_context(gen()), mimetype="video/mp2t")
 
-@app.route("/favourites")
-def favourites():
-    html = "<h1>⭐ Favourites</h1><p>Open browser console/localStorage for adding favourites.</p>"
-    return html
-
-# ============================================================
-# Run Flask
-# ============================================================
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8000, debug=True)
+# =============================
+# Start
+# =============================
+if __name__=="__main__":
+    print(f"▶ IPTV running on http://0.0.0.0:{PORT}")
+    app.run(host="0.0.0.0", port=PORT)
