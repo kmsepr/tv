@@ -168,10 +168,23 @@ def proxy_audio_only(source_url: str):
     cmd = [
         "ffmpeg",
         "-loglevel", "error",
+
+        # 🔥 IPTV stability
+        "-fflags", "+nobuffer",
+        "-flags", "low_delay",
+
+        "-reconnect", "1",
+        "-reconnect_streamed", "1",
+        "-reconnect_delay_max", "5",
+
         "-i", source_url,
-        "-vn",          # no video
-        "-ac", "1",     # mono
-        "-b:a", "40k",  # 40 kbps
+
+        "-vn",
+        "-ac", "1",
+        "-ar", "22050",
+        "-b:a", "40k",
+        "-bufsize", "256k",
+
         "-f", "mp3",
         "pipe:1"
     ]
@@ -179,19 +192,19 @@ def proxy_audio_only(source_url: str):
     proc = subprocess.Popen(
         cmd,
         stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL
+        stderr=subprocess.DEVNULL,
+        bufsize=0
     )
 
     try:
         while True:
-            chunk = proc.stdout.read(1024)
+            chunk = proc.stdout.read(4096)  # 🔥 important
             if not chunk:
                 break
             yield chunk
     finally:
         proc.terminate()
         proc.wait()
-
 # ============================================================
 # HTML TEMPLATES
 # ============================================================
