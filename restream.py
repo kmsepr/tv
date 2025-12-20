@@ -1,139 +1,143 @@
 #!/usr/bin/env python3
-import os
 import time
 import logging
-import random
-import requests
 import subprocess
-from flask import Flask, Response, render_template_string, abort, stream_with_context, request, send_file
+import requests
+from flask import Flask, Response, render_template_string, abort
 
-# =============================
-# Basic Setup
-# =============================
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 app = Flask(__name__)
+logging.basicConfig(level=logging.INFO)
 
-REFRESH_INTERVAL = 1800
-LOGO_FALLBACK = "https://iptv-org.github.io/assets/logo.png"
+# -------------------------------------------------
+# IPTV PLAYLIST
+# -------------------------------------------------
+PLAYLIST_URL = "https://iptv-org.github.io/iptv/countries/in.m3u"
+CACHE = []
+CACHE_TIME = 0
+CACHE_TTL = 1800
 
-# =============================
-# Playlists
-# =============================
-PLAYLISTS = {
-    "all": "https://iptv-org.github.io/iptv/index.m3u",
-    "india": "https://iptv-org.github.io/iptv/countries/in.m3u",
-    "news": "https://iptv-org.github.io/iptv/categories/news.m3u",
-    "movies": "https://iptv-org.github.io/iptv/categories/movies.m3u",
-    "malayalam": "https://iptv-org.github.io/iptv/languages/mal.m3u",
-}
+def load_channels():
+    global CACHE, CACHE_TIME
+    if time.time() - CACHE_TIME < CACHE_TTL and CACHE:
+        return CACHE
 
-CACHE = {}
+    txt = requests.get(PLAYLIST_URL, timeout=20).text
+    lines = [l.strip() for l in txt.splitlines() if l.strip()]
 
-# =============================
-# M3U Parser
-# =============================
-def parse_extinf(line: str):
-    if "," in line:
-        left, title = line.split(",", 1)
-    else:
-        left, title = line, ""
-    attrs = {}
-    pos = 0
-    while True:
-        eq = left.find("=", pos)
-        if eq == -1:
-            break
-        key_end = eq
-        key_start = left.rfind(" ", 0, key_end)
-        colon = left.rfind(":", 0, key_end)
-        if colon > key_start:
-            key_start = colon
-        key = left[key_start + 1:key_end].strip()
-        if eq + 1 < len(left) and left[eq + 1] == '"':
-            val_start = eq + 2
-            val_end = left.find('"', val_start)
-            if val_end == -1:
-                break
-            val = left[val_start:val_end]
-            pos = val_end + 1
-        else:
-            val_end = left.find(" ", eq + 1)
-            if val_end == -1:
-                val_end = len(left)
-            val = left[eq + 1:val_end].strip()
-            pos = val_end
-        attrs[key] = val
-    return attrs, title.strip()
-
-def parse_m3u(text: str):
-    lines = [l.strip() for l in text.splitlines() if l.strip()]
     channels = []
-    i = 0
-    while i < len(lines):
-        if lines[i].startswith("#EXTINF"):
-            attrs, title = parse_extinf(lines[i])
-            j = i + 1
-            url = None
-            while j < len(lines):
-                if not lines[j].startswith("#"):
-                    url = lines[j]
-                    break
-                j += 1
-            if url:
-                channels.append({
-                    "title": title or attrs.get("tvg-name") or "Unknown",
-                    "url": url,
-                    "logo": attrs.get("tvg-logo") or "",
-                    "group": attrs.get("group-title") or "",
-                })
-            i = j + 1
-        else:
-            i += 1
+    for i in range(len(lines)):
+        if lines[i].startswith("#EXTINF") and i + 1 < len(lines):
+            title = lines[i].split(",", 1)[-1]
+            url = lines[i + 1]
+            channels.append({"title": title, "url": url})
+
+    CACHE = channels
+    CACHE_TIME = time.time()
     return channels
 
-# =============================
-# Cache Loader
-# =============================
-def get_channels(name: str):
-    now = time.time()
-    cached = CACHE.get(name)
-    if cached and now - cached.get("time", 0) < REFRESH_INTERVAL:
-        return cached["channels"]
-    url = PLAYLISTS.get(name)
-    if not url:
-        logging.error("Playlist not found: %s", name)
-        return []
-    logging.info("[%s] Fetching playlist: %s", name, url)
-    try:
-        resp = requests.get(url, timeout=25)
-        resp.raise_for_status()
-        channels = parse_m3u(resp.text)
-        CACHE[name] = {"time": now, "channels": channels}
-        logging.info("[%s] Loaded %d channels", name, len(channels))
-        return channels
-    except Exception as e:
-        logging.error("Load failed %s: %s", name, e)
-        return []
+# -------------------------------------------------
+# UI
+# -------------------------------------------------
+HOME_HTML = """
+<!doctype html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>IPTV</title>
+<style>
+body{background:#000;color:#0f0;font-family:Arial;padding:10px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px}
+.card{border:1px solid #0f0;border-radius:10px;padding:10px;background:#111}
+.card h4{margin:0 0 10px 0;font-size:14px}
+a{display:block;margin:6px 0;padding:6px 8px;
+border:1px solid #0f0;border-radius:6px;color:#0f0;text-decoration:none;text-align:center}
+a:hover{background:#0f0;color:#000}
+</style>
+</head>
+<body>
+<h3>📺 IPTV Streaming</h3>
+<div class="grid">
+{% for c in channels %}
+<div class="card">
+<h4>{{ c.title }}</h4>
+<a href="/watch/{{ loop.index0 }}">▶ Watch (Original)</a>
+<a href="/watch-low/{{ loop.index0 }}">🔇 Watch 144p</a>
+</div>
+{% endfor %}
+</div>
+</body>
+</html>
+"""
 
-# =============================
-# HLS No-Audio Transcoder
-# =============================
-HLS_CACHE_DIR = "/tmp/hls_cache"
-os.makedirs(HLS_CACHE_DIR, exist_ok=True)
+WATCH_HTML = """
+<!doctype html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{ title }}</title>
+<style>
+body{margin:0;background:#000}
+video{width:100%;height:100vh;background:#000}
+</style>
+</head>
+<body>
+<video controls autoplay playsinline>
+  <source src="{{ src }}" type="{{ mime }}">
+</video>
+</body>
+</html>
+"""
 
-def generate_hls_noaudio(url, channel_name):
-    """Generate 144p HLS no-audio for a given stream"""
-    safe_name = channel_name.replace(" ", "_")
-    out_dir = os.path.join(HLS_CACHE_DIR, safe_name)
-    os.makedirs(out_dir, exist_ok=True)
-    m3u8_file = os.path.join(out_dir, "index.m3u8")
+# -------------------------------------------------
+# ROUTES
+# -------------------------------------------------
+@app.route("/")
+def home():
+    return render_template_string(HOME_HTML, channels=load_channels())
+
+# ---- ORIGINAL STREAM (WORKING WATCH) ----
+@app.route("/watch/<int:idx>")
+def watch(idx):
+    ch = load_channels()
+    if idx >= len(ch):
+        abort(404)
+
+    return render_template_string(
+        WATCH_HTML,
+        title=ch[idx]["title"],
+        src=ch[idx]["url"],
+        mime="application/x-mpegURL"
+    )
+
+# ---- LOW RES NO AUDIO WATCH (STREAMS) ----
+@app.route("/watch-low/<int:idx>")
+def watch_low(idx):
+    ch = load_channels()
+    if idx >= len(ch):
+        abort(404)
+
+    return render_template_string(
+        WATCH_HTML,
+        title=ch[idx]["title"] + " (144p No Audio)",
+        src=f"/stream/{idx}",
+        mime="video/mp2t"
+    )
+
+# ---- ACTUAL STREAM (NEVER OPEN DIRECTLY) ----
+@app.route("/stream/<int:idx>")
+def stream(idx):
+    ch = load_channels()
+    if idx >= len(ch):
+        abort(404)
+
+    url = ch[idx]["url"]
 
     cmd = [
         "ffmpeg",
         "-loglevel", "error",
         "-i", url,
-        "-an",                        # No audio
-        "-vf", "scale=256:144",
+        "-an",                         # ❌ remove audio
+        "-vf", "scale=256:144",        # 144p
         "-r", "15",
         "-c:v", "libx264",
         "-preset", "ultrafast",
@@ -142,91 +146,31 @@ def generate_hls_noaudio(url, channel_name):
         "-maxrate", "40k",
         "-bufsize", "240k",
         "-g", "30",
-        "-f", "hls",
-        "-hls_time", "2",
-        "-hls_list_size", "3",
-        "-hls_flags", "delete_segments+temp_file",
-        m3u8_file
+        "-f", "mpegts",
+        "pipe:1"
     ]
-    # Run FFmpeg as background process
-    subprocess.Popen(cmd)
-    return m3u8_file
 
-# =============================
-# Routes
-# =============================
-@app.route("/")
-def home():
-    html = """<!doctype html>
-<html>
-<head><meta name="viewport" content="width=device-width,initial-scale=1"><title>IPTV</title></head>
-<body>
-<h2>🌐 IPTV</h2>
-<p>Select a category:</p>
-{% for key, url in playlists.items() %}
-<a href="/list/{{ key }}">{{ key|capitalize }}</a><br>
-{% endfor %}
-</body>
-</html>"""
-    return render_template_string(html, playlists=PLAYLISTS)
+    def generate():
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            bufsize=0
+        )
+        try:
+            while True:
+                chunk = proc.stdout.read(4096)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            proc.terminate()
 
-@app.route("/list/<group>")
-def list_group(group):
-    if group not in PLAYLISTS:
-        abort(404)
-    channels = get_channels(group)
-    html = """<!doctype html>
-<html><body>
-<h3>{{ group|capitalize }} Channels</h3>
-<a href="/">← Back</a><br>
-{% for ch in channels %}
-<b>{{ ch.title }}</b> 
-[<a href="/watch/{{ group }}/{{ loop.index0 }}">Watch</a>] 
-[<a href="/stream-noaudio/{{ group }}/{{ loop.index0 }}">144p No-Audio</a>]<br>
-{% endfor %}
-</body></html>"""
-    return render_template_string(html, group=group, channels=channels)
+    return Response(generate(), mimetype="video/mp2t")
 
-@app.route("/watch/<group>/<int:idx>")
-def watch_channel(group, idx):
-    channels = get_channels(group)
-    if idx < 0 or idx >= len(channels):
-        abort(404)
-    ch = channels[idx]
-    mime = "application/vnd.apple.mpegurl" if ch["url"].endswith(".m3u8") else "video/mp4"
-    html = """<!doctype html>
-<html><body>
-<h3>{{ channel.title }}</h3>
-<video controls autoplay playsinline style="width:100%;max-height:80vh">
-<source src="{{ channel.url }}" type="{{ mime_type }}">
-</video>
-</body></html>"""
-    return render_template_string(html, channel=ch, mime_type=mime)
-
-@app.route("/stream-noaudio/<group>/<int:idx>")
-def stream_noaudio(group, idx):
-    channels = get_channels(group)
-    if idx < 0 or idx >= len(channels):
-        abort(404)
-    ch = channels[idx]
-    m3u8_file = generate_hls_noaudio(ch["url"], ch["title"])
-    # Serve HLS playlist
-    return send_file(m3u8_file, mimetype="application/vnd.apple.mpegurl")
-
-# =============================
-# Serve HLS TS segments
-# =============================
-@app.route("/hls/<channel>/<path:filename>")
-def hls_segments(channel, filename):
-    safe_name = channel.replace(" ", "_")
-    path = os.path.join(HLS_CACHE_DIR, safe_name, filename)
-    if not os.path.isfile(path):
-        abort(404)
-    return send_file(path)
-
-# =============================
-# Run Flask
-# =============================
+# -------------------------------------------------
+# START
+# -------------------------------------------------
 if __name__ == "__main__":
-    print("IPTV HLS Restream running on http://0.0.0.0:8000")
+    print("▶ http://0.0.0.0:8000")
     app.run(host="0.0.0.0", port=8000, threaded=True)
