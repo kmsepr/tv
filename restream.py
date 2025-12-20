@@ -3,47 +3,32 @@ import time
 import logging
 import subprocess
 import requests
-from flask import Flask, Response, render_template_string, abort
+from flask import Flask, Response, render_template_string, abort, stream_with_context
 
-app = Flask(__name__)
+# -------------------------------------------------
+# BASIC SETUP
+# -------------------------------------------------
 logging.basicConfig(level=logging.INFO)
-
-# -------------------------------------------------
-# ORIGINAL PLAYLIST CATEGORIES (AS YOU GAVE)
-# -------------------------------------------------
-PLAYLISTS = {
-    "all": "https://iptv-org.github.io/iptv/index.m3u",
-
-    "india": "https://iptv-org.github.io/iptv/countries/in.m3u",
-    "usa": "https://iptv-org.github.io/iptv/countries/us.m3u",
-    "uk": "https://iptv-org.github.io/iptv/countries/uk.m3u",
-    "uae": "https://iptv-org.github.io/iptv/countries/ae.m3u",
-    "saudi": "https://iptv-org.github.io/iptv/countries/sa.m3u",
-    "pakistan": "https://iptv-org.github.io/iptv/countries/pk.m3u",
-
-    "news": "https://iptv-org.github.io/iptv/categories/news.m3u",
-    "sports": "https://iptv-org.github.io/iptv/categories/sports.m3u",
-    "movies": "https://iptv-org.github.io/iptv/categories/movies.m3u",
-    "music": "https://iptv-org.github.io/iptv/categories/music.m3u",
-    "kids": "https://iptv-org.github.io/iptv/categories/kids.m3u",
-    "entertainment": "https://iptv-org.github.io/iptv/categories/entertainment.m3u",
-
-    "english": "https://iptv-org.github.io/iptv/languages/eng.m3u",
-    "hindi": "https://iptv-org.github.io/iptv/languages/hin.m3u",
-    "tamil": "https://iptv-org.github.io/iptv/languages/tam.m3u",
-    "telugu": "https://iptv-org.github.io/iptv/languages/tel.m3u",
-    "malayalam": "https://iptv-org.github.io/iptv/languages/mal.m3u",
-    "kannada": "https://iptv-org.github.io/iptv/languages/kan.m3u",
-
-    "arabic": "https://iptv-org.github.io/iptv/languages/ara.m3u",
-    "urdu": "https://iptv-org.github.io/iptv/languages/urd.m3u",
-}
+app = Flask(__name__)
 
 CACHE = {}
 CACHE_TTL = 1800
 
 # -------------------------------------------------
-# LOAD CHANNELS FOR A CATEGORY
+# PLAYLISTS
+# -------------------------------------------------
+PLAYLISTS = {
+    "all": "https://iptv-org.github.io/iptv/index.m3u",
+    "india": "https://iptv-org.github.io/iptv/countries/in.m3u",
+    "news": "https://iptv-org.github.io/iptv/categories/news.m3u",
+    "sports": "https://iptv-org.github.io/iptv/categories/sports.m3u",
+    "malayalam": "https://iptv-org.github.io/iptv/languages/mal.m3u",
+    "hindi": "https://iptv-org.github.io/iptv/languages/hin.m3u",
+    "arabic": "https://iptv-org.github.io/iptv/languages/ara.m3u",
+}
+
+# -------------------------------------------------
+# LOAD CHANNELS
 # -------------------------------------------------
 def load_channels(cat):
     now = time.time()
@@ -54,7 +39,7 @@ def load_channels(cat):
     if not url:
         return []
 
-    txt = requests.get(url, timeout=20).text
+    txt = requests.get(url, timeout=25).text
     lines = [l.strip() for l in txt.splitlines() if l.strip()]
 
     channels = []
@@ -68,16 +53,16 @@ def load_channels(cat):
     return channels
 
 # -------------------------------------------------
-# UI TEMPLATES
+# HTML
 # -------------------------------------------------
 HOME_HTML = """
 <!doctype html>
 <html>
 <head>
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>IPTV Categories</title>
+<title>IPTV</title>
 <style>
-body{background:#000;color:#0f0;font-family:Arial;padding:10px}
+body{background:#000;color:#0f0;font-family:Arial;padding:12px}
 a{display:inline-block;margin:6px;padding:10px 14px;
 border:1px solid #0f0;border-radius:10px;
 color:#0f0;text-decoration:none}
@@ -87,7 +72,7 @@ a:hover{background:#0f0;color:#000}
 <body>
 <h3>📂 Categories</h3>
 {% for k in playlists %}
-<a href="/list/{{ k }}">{{ k.replace('_',' ').title() }}</a>
+<a href="/list/{{ k }}">{{ k }}</a>
 {% endfor %}
 </body>
 </html>
@@ -100,7 +85,7 @@ LIST_HTML = """
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{{ cat }}</title>
 <style>
-body{background:#000;color:#0f0;font-family:Arial;padding:10px}
+body{background:#000;color:#0f0;font-family:Arial;padding:12px}
 .card{border:1px solid #0f0;border-radius:10px;padding:10px;margin:8px 0;background:#111}
 a{display:inline-block;margin:4px;padding:6px 10px;
 border:1px solid #0f0;border-radius:6px;color:#0f0;text-decoration:none}
@@ -108,13 +93,13 @@ border:1px solid #0f0;border-radius:6px;color:#0f0;text-decoration:none}
 </head>
 <body>
 <a href="/">⬅ Back</a>
-<h3>{{ cat.replace('_',' ').title() }}</h3>
+<h3>{{ cat }}</h3>
 
 {% for c in channels %}
 <div class="card">
 <b>{{ c.title }}</b><br>
 <a href="/watch/{{ cat }}/{{ loop.index0 }}">▶ Watch</a>
-<a href="/watch-low/{{ cat }}/{{ loop.index0 }}">🔇 144p</a>
+<a href="/low/{{ cat }}/{{ loop.index0 }}">🔇 Low</a>
 </div>
 {% endfor %}
 </body>
@@ -126,7 +111,7 @@ WATCH_HTML = """
 <html>
 <head>
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{{ title }}</title>
+<title>{{ channel.title }}</title>
 <style>
 body{margin:0;background:#000}
 video{width:100%;height:100vh;background:#000}
@@ -134,7 +119,7 @@ video{width:100%;height:100vh;background:#000}
 </head>
 <body>
 <video controls autoplay playsinline>
-  <source src="{{ src }}" type="{{ mime }}">
+  <source src="{{ channel.url }}" type="{{ mime }}">
 </video>
 </body>
 </html>
@@ -157,6 +142,7 @@ def list_cat(cat):
         channels=load_channels(cat)
     )
 
+# -------- RAW M3U8 --------
 @app.route("/watch/<cat>/<int:idx>")
 def watch(cat, idx):
     ch = load_channels(cat)
@@ -164,22 +150,30 @@ def watch(cat, idx):
         abort(404)
     return render_template_string(
         WATCH_HTML,
-        title=ch[idx]["title"],
-        src=ch[idx]["url"],
-        mime="application/x-mpegURL"
+        channel=ch[idx],
+        mime="application/vnd.apple.mpegurl"
     )
 
-@app.route("/watch-low/<cat>/<int:idx>")
-def watch_low(cat, idx):
+# -------- LOW (NO AUDIO) --------
+@app.route("/low/<cat>/<int:idx>")
+def low(cat, idx):
+    ch = load_channels(cat)
+    if idx >= len(ch):
+        abort(404)
+
+    channel = {
+        "title": ch[idx]["title"] + " (Low)",
+        "url": f"/stream-low/{cat}/{idx}"
+    }
+
     return render_template_string(
         WATCH_HTML,
-        title="Low Stream",
-        src=f"/stream/{cat}/{idx}",
+        channel=channel,
         mime="video/mp2t"
     )
 
-@app.route("/stream/<cat>/<int:idx>")
-def stream(cat, idx):
+@app.route("/stream-low/<cat>/<int:idx>")
+def stream_low(cat, idx):
     ch = load_channels(cat)
     if idx >= len(ch):
         abort(404)
@@ -187,17 +181,21 @@ def stream(cat, idx):
     cmd = [
         "ffmpeg",
         "-loglevel", "error",
+        "-reconnect", "1",
+        "-reconnect_streamed", "1",
+        "-reconnect_delay_max", "5",
         "-i", ch[idx]["url"],
         "-an",
         "-vf", "scale=256:144",
-        "-r", "15",
+        "-r", "12",
         "-c:v", "libx264",
+        "-profile:v", "baseline",
         "-preset", "ultrafast",
         "-tune", "zerolatency",
         "-b:v", "40k",
         "-maxrate", "40k",
-        "-bufsize", "240k",
-        "-g", "30",
+        "-bufsize", "80k",
+        "-g", "12",
         "-f", "mpegts",
         "pipe:1"
     ]
@@ -206,14 +204,14 @@ def stream(cat, idx):
         p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         try:
             while True:
-                d = p.stdout.read(4096)
-                if not d:
+                data = p.stdout.read(4096)
+                if not data:
                     break
-                yield d
+                yield data
         finally:
-            p.terminate()
+            p.kill()
 
-    return Response(gen(), mimetype="video/mp2t")
+    return Response(stream_with_context(gen()), mimetype="video/mp2t")
 
 # -------------------------------------------------
 if __name__ == "__main__":
