@@ -3,7 +3,7 @@ import time
 import logging
 import subprocess
 import requests
-from flask import Flask, Response, render_template_string, abort, request, redirect, url_for
+from flask import Flask, Response, render_template_string, abort, request, redirect
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -15,7 +15,6 @@ PLAYLIST_URL = "https://iptv-org.github.io/iptv/countries/in.m3u"
 CACHE = []
 CACHE_TIME = 0
 CACHE_TTL = 1800
-FAVOURITES = set()  # store favourite indexes
 
 def load_channels():
     global CACHE, CACHE_TIME
@@ -30,15 +29,16 @@ def load_channels():
         if lines[i].startswith("#EXTINF") and i + 1 < len(lines):
             title = lines[i].split(",", 1)[-1]
             url = lines[i + 1]
-            channels.append({"title": title, "url": url})
+            channels.append({"idx": i, "title": title, "url": url})
+
     CACHE = channels
     CACHE_TIME = time.time()
     return channels
 
 # -------------------------------------------------
-# UI TEMPLATE (keypad-friendly)
+# UI TEMPLATE (keypad + localStorage favourites)
 # -------------------------------------------------
-HOME_HTML = """
+HTML = """
 <!doctype html>
 <html>
 <head>
@@ -46,90 +46,98 @@ HOME_HTML = """
 <title>IPTV</title>
 <style>
 body{background:#000;color:#0f0;font-family:Arial;padding:10px}
-form{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:10px}
+form{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
 input{flex:1;padding:12px;font-size:16px;border-radius:8px;border:1px solid #0f0;background:#111;color:#0f0}
-button{padding:12px 16px;font-size:18px;border-radius:8px;border:1px solid #0f0;background:#111;color:#0f0;cursor:pointer}
-button:hover{background:#0f0;color:#000}
-a.button{padding:12px 16px;font-size:18px;border-radius:8px;border:1px solid #0f0;background:#111;color:#0f0;text-decoration:none;text-align:center;flex-shrink:0}
-a.button:hover{background:#0f0;color:#000}
+button,a.btn{padding:12px 16px;font-size:18px;border-radius:8px;border:1px solid #0f0;background:#111;color:#0f0;text-decoration:none}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px}
 .card{border:1px solid #0f0;border-radius:10px;padding:10px;background:#111}
 .card h4{margin:0 0 10px 0;font-size:14px}
-a{display:block;margin:6px 0;padding:6px 8px;border:1px solid #0f0;border-radius:6px;color:#0f0;text-decoration:none;text-align:center}
-a:hover{background:#0f0;color:#000}
-.fav-btn{font-size:12px;padding:2px 4px;margin-top:4px}
-.back-btn{margin-bottom:10px;display:inline-block;padding:6px 8px;border:1px solid #0f0;border-radius:6px;color:#0f0;text-decoration:none}
+a.link{display:block;margin:6px 0;padding:6px;border:1px solid #0f0;border-radius:6px;text-align:center}
+.fav{font-size:12px;padding:4px;margin-top:6px}
 </style>
+
+<script>
+function getFavs(){
+  return JSON.parse(localStorage.getItem("iptv_favs") || "[]");
+}
+
+function saveFavs(favs){
+  localStorage.setItem("iptv_favs", JSON.stringify(favs));
+}
+
+function toggleFav(idx){
+  let favs = getFavs();
+  if(favs.includes(idx)){
+    favs = favs.filter(i => i !== idx);
+  } else {
+    favs.push(idx);
+  }
+  saveFavs(favs);
+  location.reload();
+}
+
+function isFav(idx){
+  return getFavs().includes(idx);
+}
+
+function renderFavs(){
+  const favs = getFavs();
+  const container = document.getElementById("fav-container");
+  if(!container) return;
+
+  if(favs.length === 0){
+    container.innerHTML = "<p>No favourites</p>";
+    return;
+  }
+
+  let html = "";
+  favs.forEach(i=>{
+    html += `
+    <div class="card">
+      <h4>${channels[i].title}</h4>
+      <a class="link" href="/watch/${i}">▶ Watch</a>
+      <a class="link" href="/watch-low/${i}">🔇 144p</a>
+      <button class="fav" onclick="toggleFav(${i})">❌ Remove</button>
+    </div>`;
+  });
+  container.innerHTML = html;
+}
+</script>
 </head>
+
 <body>
 <h3>📺 IPTV Streaming</h3>
 
-<!-- Search + Favourites buttons -->
 <form method="get" action="/search">
-<input type="text" name="q" placeholder="Search channels..." value="{{ query|default('') }}">
-<button type="submit">🔍 Search</button>
-<a href="/favourites" class="button">⭐ Favourites</a>
+<input name="q" placeholder="Search channels">
+<button type="submit">🔍</button>
+<a href="/favourites" class="btn">⭐</a>
 </form>
 
-{% if favourites %}
-<h4>⭐ Favourites</h4>
-<div class="grid">
-{% for c in favourites %}
-<div class="card">
-<h4>{{ c.title }}</h4>
-<a href="/watch/{{ c.idx }}">▶ Watch (Original)</a>
-<a href="/watch-low/{{ c.idx }}">🔇 Watch 144p</a>
-<a class="fav-btn" href="/toggle_fav/{{ c.idx }}">❌ Remove from fav</a>
-</div>
-{% endfor %}
-</div>
-{% endif %}
+{% if page == "favourites" %}
+<div id="fav-container" class="grid"></div>
+<script>
+const channels = {{ channels|tojson }};
+renderFavs();
+</script>
 
-{% if query is defined %}
-<a class="back-btn" href="/">⬅ Back to all channels</a>
-{% endif %}
-
-{% if channels %}
-<h4>{{ query|default('All Channels') }}</h4>
+{% else %}
 <div class="grid">
 {% for c in channels %}
 <div class="card">
 <h4>{{ c.title }}</h4>
-<a href="/watch/{{ c.idx }}">▶ Watch (Original)</a>
-<a href="/watch-low/{{ c.idx }}">🔇 Watch 144p</a>
-{% if c.idx not in fav_ids %}
-<a class="fav-btn" href="/toggle_fav/{{ c.idx }}">⭐ Add to fav</a>
-{% else %}
-<a class="fav-btn" href="/toggle_fav/{{ c.idx }}">❌ Remove from fav</a>
-{% endif %}
+<a class="link" href="/watch/{{ c.idx }}">▶ Watch</a>
+<a class="link" href="/watch-low/{{ c.idx }}">🔇 144p</a>
+<button class="fav" onclick="toggleFav({{ c.idx }})">
+<script>document.write(isFav({{ c.idx }}) ? "❌ Remove" : "⭐ Favourite");</script>
+</button>
 </div>
 {% endfor %}
 </div>
-{% else %}
-{% if query is defined %}
-<p>No results found for "{{ query }}"</p>
+<script>
+const channels = {{ channels|tojson }};
+</script>
 {% endif %}
-{% endif %}
-
-</body>
-</html>
-"""
-
-WATCH_HTML = """
-<!doctype html>
-<html>
-<head>
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{{ title }}</title>
-<style>
-body{margin:0;background:#000}
-video{width:100%;height:100vh;background:#000}
-</style>
-</head>
-<body>
-<video controls autoplay playsinline>
-  <source src="{{ src }}" type="{{ mime }}">
-</video>
 </body>
 </html>
 """
@@ -139,107 +147,47 @@ video{width:100%;height:100vh;background:#000}
 # -------------------------------------------------
 @app.route("/")
 def home():
-    channels = load_channels()
-    channels_with_idx = [{"idx": i, "title": c["title"], "url": c["url"]} 
-                         for i, c in enumerate(channels)]
-
-    fav_list = [{"idx": i, "title": channels[i]["title"], "url": channels[i]["url"]}
-                for i in FAVOURITES if i < len(channels)]
-
-    return render_template_string(
-        HOME_HTML,
-        channels=channels_with_idx,
-        fav_ids=FAVOURITES,
-        favourites=fav_list
-    )
+    return render_template_string(HTML, channels=load_channels(), page="home")
 
 @app.route("/search")
 def search():
-    query = request.args.get("q", "").strip().lower()
-    if not query:
-        return redirect("/")
-
-    channels = load_channels()
-    matched = [{"idx": i, "title": c["title"], "url": c["url"]} 
-               for i, c in enumerate(channels) if query in c["title"].lower()]
-
-    return render_template_string(HOME_HTML,
-                                  channels=matched,
-                                  fav_ids=FAVOURITES,
-                                  favourites=[],
-                                  query=query)
+    q = request.args.get("q","").lower()
+    results = [c for c in load_channels() if q in c["title"].lower()]
+    return render_template_string(HTML, channels=results, page="search")
 
 @app.route("/favourites")
 def favourites():
-    channels = load_channels()
-    fav_list = [{"idx": i, "title": channels[i]["title"], "url": channels[i]["url"]}
-                for i in FAVOURITES if i < len(channels)]
-    return render_template_string(HOME_HTML,
-                                  channels=fav_list,
-                                  fav_ids=FAVOURITES,
-                                  favourites=[],
-                                  query="Favourites")
-
-@app.route("/toggle_fav/<int:idx>")
-def toggle_fav(idx):
-    if idx in FAVOURITES:
-        FAVOURITES.remove(idx)
-    else:
-        FAVOURITES.add(idx)
-    return redirect(request.referrer or "/")
+    return render_template_string(HTML, channels=load_channels(), page="favourites")
 
 @app.route("/watch/<int:idx>")
 def watch(idx):
     ch = load_channels()
-    if idx >= len(ch):
-        abort(404)
-    return render_template_string(
-        WATCH_HTML,
-        title=ch[idx]["title"],
-        src=ch[idx]["url"],
-        mime="application/x-mpegURL"
-    )
+    if idx >= len(ch): abort(404)
+    return f"<video controls autoplay src='{ch[idx]['url']}' style='width:100%;height:100vh'></video>"
 
 @app.route("/watch-low/<int:idx>")
 def watch_low(idx):
-    ch = load_channels()
-    if idx >= len(ch):
-        abort(404)
-    return render_template_string(
-        WATCH_HTML,
-        title=ch[idx]["title"] + " (144p No Audio)",
-        src=f"/stream/{idx}",
-        mime="video/mp2t"
-    )
+    return f"<video controls autoplay src='/stream/{idx}' style='width:100%;height:100vh'></video>"
 
 @app.route("/stream/<int:idx>")
 def stream(idx):
-    ch = load_channels()
-    if idx >= len(ch):
-        abort(404)
-    url = ch[idx]["url"]
+    url = load_channels()[idx]["url"]
     cmd = [
-        "ffmpeg", "-loglevel", "error", "-i", url, "-an",
-        "-vf", "scale=256:144", "-r", "15", "-c:v", "libx264",
-        "-preset", "ultrafast", "-tune", "zerolatency",
-        "-b:v", "40k", "-maxrate", "40k", "-bufsize", "240k",
-        "-g", "30", "-f", "mpegts", "pipe:1"
+        "ffmpeg","-loglevel","error","-i",url,"-an",
+        "-vf","scale=256:144","-r","15",
+        "-c:v","libx264","-preset","ultrafast",
+        "-b:v","40k","-f","mpegts","pipe:1"
     ]
-    def generate():
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=0)
-        try:
-            while True:
-                chunk = proc.stdout.read(4096)
-                if not chunk:
-                    break
-                yield chunk
-        finally:
-            proc.terminate()
-    return Response(generate(), mimetype="video/mp2t")
+    def gen():
+        p = subprocess.Popen(cmd, stdout=subprocess.PIPE)
+        while True:
+            data = p.stdout.read(4096)
+            if not data: break
+            yield data
+    return Response(gen(), mimetype="video/mp2t")
 
 # -------------------------------------------------
 # START
 # -------------------------------------------------
 if __name__ == "__main__":
-    print("▶ http://0.0.0.0:8000")
     app.run(host="0.0.0.0", port=8000, threaded=True)
