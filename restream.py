@@ -36,7 +36,7 @@ def load_channels():
     return channels
 
 # -------------------------------------------------
-# UI TEMPLATE
+# UI TEMPLATE (keypad-friendly)
 # -------------------------------------------------
 HOME_HTML = """
 <!doctype html>
@@ -46,11 +46,11 @@ HOME_HTML = """
 <title>IPTV</title>
 <style>
 body{background:#000;color:#0f0;font-family:Arial;padding:10px}
-form{display:flex;margin-bottom:10px}
-input{flex:1;padding:8px;border-radius:6px;border:1px solid #0f0;background:#111;color:#0f0}
-button{padding:0 12px;margin-left:4px;border-radius:6px;border:1px solid #0f0;background:#111;color:#0f0;font-size:20px;cursor:pointer}
+form{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:10px}
+input{flex:1;padding:12px;font-size:16px;border-radius:8px;border:1px solid #0f0;background:#111;color:#0f0}
+button{padding:12px 16px;font-size:18px;border-radius:8px;border:1px solid #0f0;background:#111;color:#0f0;cursor:pointer}
 button:hover{background:#0f0;color:#000}
-a.button{margin-left:6px;padding:6px 12px;border:1px solid #0f0;border-radius:6px;color:#0f0;text-decoration:none;text-align:center}
+a.button{padding:12px 16px;font-size:18px;border-radius:8px;border:1px solid #0f0;background:#111;color:#0f0;text-decoration:none;text-align:center;flex-shrink:0}
 a.button:hover{background:#0f0;color:#000}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px}
 .card{border:1px solid #0f0;border-radius:10px;padding:10px;background:#111}
@@ -64,9 +64,10 @@ a:hover{background:#0f0;color:#000}
 <body>
 <h3>📺 IPTV Streaming</h3>
 
+<!-- Search + Favourites buttons -->
 <form method="get" action="/search">
 <input type="text" name="q" placeholder="Search channels..." value="{{ query|default('') }}">
-<button type="submit">🔍</button>
+<button type="submit">🔍 Search</button>
 <a href="/favourites" class="button">⭐ Favourites</a>
 </form>
 
