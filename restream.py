@@ -3,7 +3,7 @@ import time
 import logging
 import subprocess
 import requests
-from flask import Flask, Response, render_template_string, abort
+from flask import Flask, Response, render_template_string, abort, request, redirect, url_for
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -15,6 +15,7 @@ PLAYLIST_URL = "https://iptv-org.github.io/iptv/countries/in.m3u"
 CACHE = []
 CACHE_TIME = 0
 CACHE_TTL = 1800
+FAVOURITES = set()  # store favourite indexes
 
 def load_channels():
     global CACHE, CACHE_TIME
@@ -30,7 +31,6 @@ def load_channels():
             title = lines[i].split(",", 1)[-1]
             url = lines[i + 1]
             channels.append({"title": title, "url": url})
-
     CACHE = channels
     CACHE_TIME = time.time()
     return channels
@@ -46,25 +46,50 @@ HOME_HTML = """
 <title>IPTV</title>
 <style>
 body{background:#000;color:#0f0;font-family:Arial;padding:10px}
+input{width:100%;padding:8px;margin-bottom:10px;border-radius:6px;border:1px solid #0f0;background:#111;color:#0f0}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px}
 .card{border:1px solid #0f0;border-radius:10px;padding:10px;background:#111}
 .card h4{margin:0 0 10px 0;font-size:14px}
-a{display:block;margin:6px 0;padding:6px 8px;
-border:1px solid #0f0;border-radius:6px;color:#0f0;text-decoration:none;text-align:center}
+a{display:block;margin:6px 0;padding:6px 8px;border:1px solid #0f0;border-radius:6px;color:#0f0;text-decoration:none;text-align:center}
 a:hover{background:#0f0;color:#000}
+.fav-btn{font-size:12px;padding:2px 4px;margin-top:4px}
 </style>
 </head>
 <body>
 <h3>📺 IPTV Streaming</h3>
+
+<form method="get" action="/">
+<input type="text" name="q" placeholder="Search channels..." value="{{ query|default('') }}">
+</form>
+
+{% if favourites %}
+<h4>⭐ Favourites</h4>
+<div class="grid">
+{% for c in favourites %}
+<div class="card">
+<h4>{{ c.title }}</h4>
+<a href="/watch/{{ c.idx }}">▶ Watch (Original)</a>
+<a href="/watch-low/{{ c.idx }}">🔇 Watch 144p</a>
+<a class="fav-btn" href="/toggle_fav/{{ c.idx }}">❌ Remove from fav</a>
+</div>
+{% endfor %}
+</div>
+{% endif %}
+
+<h4>All Channels</h4>
 <div class="grid">
 {% for c in channels %}
 <div class="card">
 <h4>{{ c.title }}</h4>
-<a href="/watch/{{ loop.index0 }}">▶ Watch (Original)</a>
-<a href="/watch-low/{{ loop.index0 }}">🔇 Watch 144p</a>
+<a href="/watch/{{ c.idx }}">▶ Watch (Original)</a>
+<a href="/watch-low/{{ c.idx }}">🔇 Watch 144p</a>
+{% if c.idx in fav_ids %}
+<a class="fav-btn" href="/toggle_fav/{{ c.idx }}">⭐ Add to fav</a>
+{% endif %}
 </div>
 {% endfor %}
 </div>
+
 </body>
 </html>
 """
@@ -93,15 +118,39 @@ video{width:100%;height:100vh;background:#000}
 # -------------------------------------------------
 @app.route("/")
 def home():
-    return render_template_string(HOME_HTML, channels=load_channels())
+    query = request.args.get("q", "").lower()
+    channels = load_channels()
+    channels_with_idx = [{"idx": i, "title": c["title"], "url": c["url"]} for i, c in enumerate(channels)]
 
-# ---- ORIGINAL STREAM (WORKING WATCH) ----
+    # Filter channels by search query
+    if query:
+        channels_with_idx = [c for c in channels_with_idx if query in c["title"].lower()]
+
+    # Prepare favourites
+    fav_list = [{"idx": i, "title": channels[i]["title"], "url": channels[i]["url"]}
+                for i in FAVOURITES if i < len(channels)]
+
+    return render_template_string(
+        HOME_HTML,
+        channels=channels_with_idx,
+        fav_ids=FAVOURITES,
+        favourites=fav_list,
+        query=query
+    )
+
+@app.route("/toggle_fav/<int:idx>")
+def toggle_fav(idx):
+    if idx in FAVOURITES:
+        FAVOURITES.remove(idx)
+    else:
+        FAVOURITES.add(idx)
+    return redirect(request.referrer or "/")
+
 @app.route("/watch/<int:idx>")
 def watch(idx):
     ch = load_channels()
     if idx >= len(ch):
         abort(404)
-
     return render_template_string(
         WATCH_HTML,
         title=ch[idx]["title"],
@@ -109,13 +158,11 @@ def watch(idx):
         mime="application/x-mpegURL"
     )
 
-# ---- LOW RES NO AUDIO WATCH (STREAMS) ----
 @app.route("/watch-low/<int:idx>")
 def watch_low(idx):
     ch = load_channels()
     if idx >= len(ch):
         abort(404)
-
     return render_template_string(
         WATCH_HTML,
         title=ch[idx]["title"] + " (144p No Audio)",
@@ -123,40 +170,21 @@ def watch_low(idx):
         mime="video/mp2t"
     )
 
-# ---- ACTUAL STREAM (NEVER OPEN DIRECTLY) ----
 @app.route("/stream/<int:idx>")
 def stream(idx):
     ch = load_channels()
     if idx >= len(ch):
         abort(404)
-
     url = ch[idx]["url"]
-
     cmd = [
-        "ffmpeg",
-        "-loglevel", "error",
-        "-i", url,
-        "-an",                         # ❌ remove audio
-        "-vf", "scale=256:144",        # 144p
-        "-r", "15",
-        "-c:v", "libx264",
-        "-preset", "ultrafast",
-        "-tune", "zerolatency",
-        "-b:v", "40k",
-        "-maxrate", "40k",
-        "-bufsize", "240k",
-        "-g", "30",
-        "-f", "mpegts",
-        "pipe:1"
+        "ffmpeg", "-loglevel", "error", "-i", url, "-an",
+        "-vf", "scale=256:144", "-r", "15", "-c:v", "libx264",
+        "-preset", "ultrafast", "-tune", "zerolatency",
+        "-b:v", "40k", "-maxrate", "40k", "-bufsize", "240k",
+        "-g", "30", "-f", "mpegts", "pipe:1"
     ]
-
     def generate():
-        proc = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            bufsize=0
-        )
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=0)
         try:
             while True:
                 chunk = proc.stdout.read(4096)
@@ -165,7 +193,6 @@ def stream(idx):
                 yield chunk
         finally:
             proc.terminate()
-
     return Response(generate(), mimetype="video/mp2t")
 
 # -------------------------------------------------
