@@ -55,14 +55,18 @@ HTML = """
 <title>IPTV</title>
 <style>
 body{background:#000;color:#0f0;font-family:Arial;padding:10px}
-h3{margin:4px 0}
-.top{display:flex;gap:6px;margin-bottom:10px}
-input{flex:1;padding:12px;font-size:16px;border:1px solid #0f0;background:#111;color:#0f0;border-radius:8px}
-button,a.tab{padding:12px 14px;font-size:16px;border:1px solid #0f0;background:#111;color:#0f0;border-radius:8px;text-decoration:none}
+h3{margin:6px 0}
+.search{display:flex;gap:6px;margin-bottom:8px}
+input{flex:1;padding:14px;font-size:18px;border:1px solid #0f0;background:#111;color:#0f0;border-radius:8px}
+button{padding:14px 18px;font-size:20px;border:1px solid #0f0;background:#111;color:#0f0;border-radius:8px}
+.nav{display:flex;gap:10px;margin-bottom:12px}
+a.navbtn{flex:1;text-align:center;padding:14px;font-size:18px;
+border:1px solid #0f0;background:#111;color:#0f0;border-radius:8px;
+text-decoration:none}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px}
 .card{border:1px solid #0f0;border-radius:10px;padding:10px;background:#111;text-align:center}
-a.link{display:block;margin:6px 0;padding:8px;border:1px solid #0f0;border-radius:6px;text-decoration:none;color:#0f0}
-.small{font-size:12px;padding:4px}
+a.link{display:block;margin:6px 0;padding:10px;border:1px solid #0f0;border-radius:6px;color:#0f0;text-decoration:none}
+.small{font-size:13px;padding:6px}
 </style>
 
 <script>
@@ -75,22 +79,27 @@ function toggle(k){
 }
 </script>
 </head>
+
 <body>
 
 <h3>📺 IPTV</h3>
 
-<div class="top">
-<form method="get" action="/search" style="flex:1;display:flex;gap:6px">
-<input name="q" placeholder="Search">
+<!-- SEARCH BAR -->
+<form method="get" action="/search" class="search">
+<input name="q" placeholder="Search channels">
 <button>🔍</button>
 </form>
-<a class="tab" href="/">🏠</a>
-<a class="tab" href="/favourites">⭐</a>
+
+<!-- HOME + FAVOURITES BELOW SEARCH -->
+<div class="nav">
+<a class="navbtn" href="/">🏠 HOME</a>
+<a class="navbtn" href="/favourites">⭐ FAVOURITES</a>
 </div>
 
 <div class="grid">
 {% for i in items %}
 <div class="card">
+
 {% if page=="home" %}
 <a class="link" href="/category/{{ i.key }}">{{ i.name }}</a>
 
@@ -105,6 +114,7 @@ function toggle(k){
 <a class="link" href="/watch/{{ cat }}/{{ i.idx }}">▶ Watch</a>
 <a class="link" href="/watch-low/{{ cat }}/{{ i.idx }}">🔇 144p</a>
 <button class="small" onclick="toggle('{{ cat }}|{{ i.idx }}')">⭐ Favourite</button>
+
 {% endif %}
 </div>
 {% endfor %}
