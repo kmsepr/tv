@@ -6,58 +6,46 @@ app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 
 # -------------------------------------------------
-# PLAYLISTS (CATEGORIES)
+# PLAYLISTS
 # -------------------------------------------------
 PLAYLISTS = {
-    "All Channels": "https://iptv-org.github.io/iptv/index.m3u",
-
     "India": "https://iptv-org.github.io/iptv/countries/in.m3u",
     "USA": "https://iptv-org.github.io/iptv/countries/us.m3u",
     "UK": "https://iptv-org.github.io/iptv/countries/uk.m3u",
     "UAE": "https://iptv-org.github.io/iptv/countries/ae.m3u",
-    "Saudi": "https://iptv-org.github.io/iptv/countries/sa.m3u",
-    "Pakistan": "https://iptv-org.github.io/iptv/countries/pk.m3u",
 
     "News": "https://iptv-org.github.io/iptv/categories/news.m3u",
     "Sports": "https://iptv-org.github.io/iptv/categories/sports.m3u",
     "Movies": "https://iptv-org.github.io/iptv/categories/movies.m3u",
     "Music": "https://iptv-org.github.io/iptv/categories/music.m3u",
-    "Kids": "https://iptv-org.github.io/iptv/categories/kids.m3u",
-    "Entertainment": "https://iptv-org.github.io/iptv/categories/entertainment.m3u",
 
     "Malayalam": "https://iptv-org.github.io/iptv/languages/mal.m3u",
     "Hindi": "https://iptv-org.github.io/iptv/languages/hin.m3u",
     "Tamil": "https://iptv-org.github.io/iptv/languages/tam.m3u",
-    "Telugu": "https://iptv-org.github.io/iptv/languages/tel.m3u",
-    "Arabic": "https://iptv-org.github.io/iptv/languages/ara.m3u",
-    "Urdu": "https://iptv-org.github.io/iptv/languages/urd.m3u",
 }
 
-CACHE = {}
-CACHE_TTL = 1800
+CACHE, CACHE_TTL = {}, 1800
 
 def load_playlist(url):
     now = time.time()
-    if url in CACHE and now - CACHE[url]["time"] < CACHE_TTL:
-        return CACHE[url]["data"]
+    if url in CACHE and now - CACHE[url]["t"] < CACHE_TTL:
+        return CACHE[url]["d"]
 
     txt = requests.get(url, timeout=20).text
     lines = [l.strip() for l in txt.splitlines() if l.strip()]
-    channels = []
-
+    out = []
     for i in range(len(lines)):
         if lines[i].startswith("#EXTINF") and i + 1 < len(lines):
-            channels.append({
+            out.append({
                 "idx": i,
-                "title": lines[i].split(",", 1)[-1],
-                "url": lines[i + 1]
+                "title": lines[i].split(",",1)[-1],
+                "url": lines[i+1]
             })
-
-    CACHE[url] = {"time": now, "data": channels}
-    return channels
+    CACHE[url] = {"t": now, "d": out}
+    return out
 
 # -------------------------------------------------
-# UI (KEYPAD FRIENDLY)
+# UI
 # -------------------------------------------------
 HTML = """
 <!doctype html>
@@ -67,38 +55,64 @@ HTML = """
 <title>IPTV</title>
 <style>
 body{background:#000;color:#0f0;font-family:Arial;padding:10px}
-h3{margin-top:0}
-form{display:flex;gap:6px;margin-bottom:10px}
-input{flex:1;padding:12px;font-size:16px;border-radius:8px;border:1px solid #0f0;background:#111;color:#0f0}
-button{padding:12px 16px;font-size:18px;border-radius:8px;border:1px solid #0f0;background:#111;color:#0f0}
+h3{margin:4px 0}
+.top{display:flex;gap:6px;margin-bottom:10px}
+input{flex:1;padding:12px;font-size:16px;border:1px solid #0f0;background:#111;color:#0f0;border-radius:8px}
+button,a.tab{padding:12px 14px;font-size:16px;border:1px solid #0f0;background:#111;color:#0f0;border-radius:8px;text-decoration:none}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px}
-.card{border:1px solid #0f0;border-radius:10px;padding:12px;background:#111;text-align:center}
-a{display:block;padding:10px;margin:6px 0;border:1px solid #0f0;border-radius:6px;color:#0f0;text-decoration:none}
-a:hover{background:#0f0;color:#000}
+.card{border:1px solid #0f0;border-radius:10px;padding:10px;background:#111;text-align:center}
+a.link{display:block;margin:6px 0;padding:8px;border:1px solid #0f0;border-radius:6px;text-decoration:none;color:#0f0}
+.small{font-size:12px;padding:4px}
 </style>
+
+<script>
+function favs(){return JSON.parse(localStorage.getItem("iptv_favs")||"[]")}
+function save(f){localStorage.setItem("iptv_favs",JSON.stringify(f))}
+function toggle(k){
+ let f=favs();
+ f.includes(k)?f=f.filter(x=>x!=k):f.push(k);
+ save(f); location.reload();
+}
+</script>
 </head>
 <body>
 
 <h3>📺 IPTV</h3>
 
-<form method="get" action="/search">
-<input name="q" placeholder="Search channels">
+<div class="top">
+<form method="get" action="/search" style="flex:1;display:flex;gap:6px">
+<input name="q" placeholder="Search">
 <button>🔍</button>
 </form>
+<a class="tab" href="/">🏠</a>
+<a class="tab" href="/favourites">⭐</a>
+</div>
 
 <div class="grid">
-{% for item in items %}
+{% for i in items %}
 <div class="card">
-{% if page == "home" %}
-<a href="/category/{{ item.key }}">{{ item.name }}</a>
+{% if page=="home" %}
+<a class="link" href="/category/{{ i.key }}">{{ i.name }}</a>
+
+{% elif page=="favs" %}
+<b>{{ i.title }}</b>
+<a class="link" href="/watch/{{ i.cat }}/{{ i.idx }}">▶ Watch</a>
+<a class="link" href="/watch-low/{{ i.cat }}/{{ i.idx }}">🔇 144p</a>
+<button class="small" onclick="toggle('{{ i.key }}')">❌ Remove</button>
+
 {% else %}
-<b>{{ item.title }}</b>
-<a href="/watch/{{ cat }}/{{ item.idx }}">▶ Watch</a>
-<a href="/watch-low/{{ cat }}/{{ item.idx }}">🔇 144p</a>
+<b>{{ i.title }}</b>
+<a class="link" href="/watch/{{ cat }}/{{ i.idx }}">▶ Watch</a>
+<a class="link" href="/watch-low/{{ cat }}/{{ i.idx }}">🔇 144p</a>
+<button class="small" onclick="toggle('{{ cat }}|{{ i.idx }}')">⭐ Favourite</button>
 {% endif %}
 </div>
 {% endfor %}
 </div>
+
+{% if page=="favs" and not items %}
+<p>No favourites yet</p>
+{% endif %}
 
 </body>
 </html>
@@ -109,32 +123,42 @@ a:hover{background:#0f0;color:#000}
 # -------------------------------------------------
 @app.route("/")
 def home():
-    items = [{"name": k, "key": k} for k in PLAYLISTS]
-    return render_template_string(HTML, items=items, page="home")
+    items=[{"name":k,"key":k} for k in PLAYLISTS]
+    return render_template_string(HTML,items=items,page="home")
 
-@app.route("/category/<name>")
-def category(name):
-    if name not in PLAYLISTS:
-        abort(404)
-    ch = load_playlist(PLAYLISTS[name])
-    return render_template_string(HTML, items=ch, page="list", cat=name)
+@app.route("/category/<cat>")
+def category(cat):
+    if cat not in PLAYLISTS: abort(404)
+    return render_template_string(
+        HTML,
+        items=load_playlist(PLAYLISTS[cat]),
+        page="list",
+        cat=cat
+    )
 
 @app.route("/search")
 def search():
-    q = request.args.get("q","").lower()
-    results = []
-    for name,url in PLAYLISTS.items():
+    q=request.args.get("q","").lower()
+    res=[]
+    for cat,url in PLAYLISTS.items():
         for c in load_playlist(url):
             if q in c["title"].lower():
-                c2 = c.copy()
-                c2["cat"] = name
-                results.append(c2)
-    return render_template_string(HTML, items=results, page="list", cat="All")
+                res.append(c|{"cat":cat})
+    return render_template_string(HTML,items=res,page="list",cat="")
+
+@app.route("/favourites")
+def favourites():
+    favs=request.args.get("f","")
+    items=[]
+    for cat,url in PLAYLISTS.items():
+        for c in load_playlist(url):
+            key=f"{cat}|{c['idx']}"
+            items.append(c|{"cat":cat,"key":key})
+    return render_template_string(HTML,items=items,page="favs")
 
 @app.route("/watch/<cat>/<int:i>")
 def watch(cat,i):
-    ch = load_playlist(PLAYLISTS[cat])
-    if i >= len(ch): abort(404)
+    ch=load_playlist(PLAYLISTS[cat])
     return f"<video controls autoplay src='{ch[i]['url']}' style='width:100%;height:100vh'></video>"
 
 @app.route("/watch-low/<cat>/<int:i>")
@@ -143,21 +167,19 @@ def watch_low(cat,i):
 
 @app.route("/stream/<cat>/<int:i>")
 def stream(cat,i):
-    url = load_playlist(PLAYLISTS[cat])[i]["url"]
-    cmd = [
-        "ffmpeg","-loglevel","error","-i",url,"-an",
-        "-vf","scale=256:144","-r","15",
-        "-c:v","libx264","-preset","ultrafast",
-        "-b:v","40k","-f","mpegts","pipe:1"
-    ]
+    url=load_playlist(PLAYLISTS[cat])[i]["url"]
+    cmd=["ffmpeg","-loglevel","error","-i",url,"-an",
+         "-vf","scale=256:144","-r","15",
+         "-c:v","libx264","-preset","ultrafast",
+         "-b:v","40k","-f","mpegts","pipe:1"]
     def gen():
-        p = subprocess.Popen(cmd, stdout=subprocess.PIPE)
+        p=subprocess.Popen(cmd,stdout=subprocess.PIPE)
         while True:
-            d = p.stdout.read(4096)
+            d=p.stdout.read(4096)
             if not d: break
             yield d
-    return Response(gen(), mimetype="video/mp2t")
+    return Response(gen(),mimetype="video/mp2t")
 
 # -------------------------------------------------
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8000, threaded=True)
+if __name__=="__main__":
+    app.run(host="0.0.0.0",port=8000,threaded=True)
