@@ -665,38 +665,53 @@ def watch_direct():
 def proxy_video_240p(source_url: str):
     cmd = [
         "ffmpeg", "-loglevel", "error",
-        "-i", source_url,
 
-        # ❌ remove audio
-        "-an",
+        # 🔁 reconnect safety (important for IPTV)
+        "-reconnect", "1",
+        "-reconnect_streamed", "1",
+        "-reconnect_delay_max", "5",
+
+        "-i", source_url,
 
         # 🔻 240p with reduced fps
         "-vf", "scale=-2:240,fps=12",
 
+        # 🎥 VIDEO
         "-c:v", "libx264",
         "-profile:v", "baseline",
         "-level", "3.0",
         "-preset", "ultrafast",
         "-tune", "zerolatency",
+        "-pix_fmt", "yuv420p",
 
-        # 🔻 lowest SAFE 240p bitrate
-        "-b:v", "60k",
-        "-maxrate", "65k",
-        "-bufsize", "120k",
+        # 🔻 LOW video bitrate
+        "-b:v", "45k",
+        "-maxrate", "50k",
+        "-bufsize", "90k",
 
         # streaming-friendly GOP
         "-g", "24",
         "-keyint_min", "24",
         "-sc_threshold", "0",
 
-        "-pix_fmt", "yuv420p",
+        # 🔊 AUDIO (ultra-low, but audible)
+        "-c:a", "aac",
+        "-ac", "1",          # mono
+        "-ar", "22050",      # low sample rate
+        "-b:a", "16k",
 
         # stream-safe container
         "-f", "mpegts",
         "pipe:1"
-        ]
+    ]
 
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        bufsize=0
+    )
+
     try:
         while True:
             data = proc.stdout.read(64 * 1024)
