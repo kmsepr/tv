@@ -98,13 +98,24 @@ def proxy_video_no_audio(url):
 HOME_HTML = """
 <!doctype html>
 <html>
-<body style="background:#000;color:#0f0;font-family:Arial;font-size:20px;padding:12px">
-<h2>📺 IPTV</h2>
-<a href="/random" style="display:block;padding:10px;border:2px solid #0f0;margin-bottom:10px">🎲 Random</a>
-<a href="/favourites" style="display:block;padding:10px;border:2px solid yellow;color:yellow;margin-bottom:10px">⭐ Favourites</a>
+<body style="background:#000;color:#0f0;font-family:Arial;font-size:26px;padding:16px">
+
+<h1>📺 IPTV</h1>
+
+<a href="/random" style="display:block;padding:18px;border:3px solid #0f0;margin-bottom:14px">
+🎲 Random
+</a>
+
+<a href="/favourites" style="display:block;padding:18px;border:3px solid yellow;color:yellow;margin-bottom:18px">
+⭐ Favourites
+</a>
+
 {% for k in playlists %}
-<a href="/list/{{k}}" style="display:block;padding:10px;border:2px solid #0f0;margin-bottom:8px">{{k|upper}}</a>
+<a href="/list/{{k}}" style="display:block;padding:18px;border:3px solid #0f0;margin-bottom:12px">
+{{k|upper}}
+</a>
 {% endfor %}
+
 </body>
 </html>
 """
@@ -112,20 +123,44 @@ HOME_HTML = """
 LIST_HTML = """
 <!doctype html>
 <html>
-<body style="background:#000;color:#0f0;font-family:Arial;font-size:20px;padding:12px">
-<h3>{{group|upper}}</h3>
-<a href="/" style="padding:10px;border:2px solid #0f0;display:inline-block;margin-bottom:10px">← Home</a>
+<head>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+</head>
+<body style="background:#000;color:#0f0;font-family:Arial;font-size:22px;padding:14px">
 
+<h2>{{group|upper}}</h2>
+
+<a href="/" style="display:inline-block;padding:14px 18px;border:3px solid #0f0;margin-bottom:14px;font-size:22px">
+← Home
+</a>
+
+<input id="search" placeholder="🔍 Search channel..."
+       style="width:100%;padding:16px;font-size:22px;margin:14px 0;
+              background:#000;color:#0f0;border:3px solid #0f0">
+
+<div id="list">
 {% for c in channels %}
-<div style="border:2px solid #0f0;padding:12px;margin:10px 0">
-  <div>{{loop.index}}. {{c.title}}</div>
-  <a href="/watch/{{group}}/{{loop.index0}}" style="display:inline-block;padding:10px;border:2px solid #0f0;margin-top:8px">▶ Watch</a>
+<div class="item" style="border:3px solid #0f0;padding:16px;margin:14px 0">
+  <div style="font-size:24px;margin-bottom:10px">
+    {{loop.index}}. {{c.title}}
+  </div>
+
+  <a href="/watch/{{group}}/{{loop.index0}}"
+     style="display:inline-block;padding:14px 18px;
+            border:3px solid #0f0;font-size:22px">
+    ▶ Watch
+  </a>
+
   <button onclick='addFav("{{c.title}}","{{c.url}}")'
-          style="padding:10px;border:2px solid yellow;background:#000;color:yellow;margin-left:10px">
-          ⭐ Fav
+          style="padding:14px 18px;
+                 border:3px solid yellow;
+                 background:#000;color:yellow;
+                 font-size:22px;margin-left:10px">
+    ⭐ Fav
   </button>
 </div>
 {% endfor %}
+</div>
 
 <script>
 function addFav(title,url){
@@ -133,12 +168,20 @@ function addFav(title,url){
   if(!f.find(x=>x.url===url)){
     f.push({title:title,url:url});
     localStorage.setItem('favs',JSON.stringify(f));
-    alert("Added");
+    alert("Added to favourites");
   } else {
     alert("Already added");
   }
 }
+
+document.getElementById("search").addEventListener("input", function(){
+  let q = this.value.toLowerCase();
+  document.querySelectorAll(".item").forEach(el=>{
+    el.style.display = el.innerText.toLowerCase().includes(q) ? "" : "none";
+  });
+});
 </script>
+
 </body>
 </html>
 """
