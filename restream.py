@@ -515,7 +515,6 @@ function loadFavs(){
 <a class="btn"
    href="/play-240p-direct?u=${encodeURIComponent(c.url)}"
    target="_blank">📉 240p</a>
-          <a class="btn" href="/play-audio/fav/${i}" target="_blank">🎧 Audio</a>
         </div>
       </div>
     </div>`;
