@@ -69,12 +69,12 @@ def proxy_video_no_audio(url):
         "-c:v", "libx264",
         "-preset", "ultrafast",
         "-tune", "zerolatency",
-        "-b:v", "44k",
+        "-b:v", "32k",
         "-maxrate", "44k",
         "-bufsize", "200k",
         "-g", "24",
 
-        # Audio (≈16 kbps)
+        # Audio (≈12 kbps)
         "-c:a", "aac",
         "-b:a", "12k",
         "-ac", "1",
