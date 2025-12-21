@@ -57,28 +57,35 @@ def get_channels(name):
 # VIDEO-ONLY TRANSCODER (NO AUDIO, ~40kbps)
 # ============================================================
 def proxy_video_no_audio(url):
-    cmd = [
-        "ffmpeg", "-loglevel", "error",
+        cmd = [
+        "ffmpeg",
         "-i", url,
-        "-an",
-        "-vf", "scale=256:-2",
+        "-an",                     # 🔇 NO AUDIO
+        "-vf", "scale=256:144",
+        "-r", "15",
         "-c:v", "libx264",
-        "-b:v", "40k",
         "-preset", "ultrafast",
         "-tune", "zerolatency",
-        "-movflags", "frag_keyframe+empty_moov",
-        "-f", "mp4",
+        "-b:v", "40k",
+        "-maxrate", "40k",
+        "-bufsize", "240k",
+        "-g", "30",
+        "-f", "mpegts",
         "pipe:1"
     ]
-    p = subprocess.Popen(cmd, stdout=subprocess.PIPE)
-    try:
-        while True:
-            data = p.stdout.read(64 * 1024)
-            if not data:
-                break
-            yield data
-    finally:
-        p.kill()
+
+    def generate():
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        try:
+            while True:
+                chunk = proc.stdout.read(1024)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            proc.terminate()
+
+    return Response(generate(), mimetype="video/mp2t")
 
 # ============================================================
 # HTML
