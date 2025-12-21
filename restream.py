@@ -757,6 +757,28 @@ def watch_240p(group, idx):
         mime_type="video/mp2t"
     )
 
+
+@app.route("/watch-240p-direct")
+def watch_240p_direct():
+    u = request.args.get("u")
+    title = request.args.get("title", "Channel")
+    logo = request.args.get("logo", "")
+
+    if not u:
+        abort(404)
+
+    channel = {
+        "title": title + " (240p)",
+        "url": f"/play-240p-direct?u={u}",
+        "logo": logo
+    }
+
+    return render_template_string(
+        WATCH_HTML,
+        channel=channel,
+        mime_type="video/mp2t"
+    )
+
 # ============================================================
 # Entry
 # ============================================================
