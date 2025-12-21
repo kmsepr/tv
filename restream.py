@@ -667,20 +667,34 @@ def proxy_video_240p(source_url: str):
         "ffmpeg", "-loglevel", "error",
         "-i", source_url,
 
+        # ❌ remove audio
         "-an",
-        "-vf", "scale=-2:240",
+
+        # 🔻 240p with reduced fps
+        "-vf", "scale=-2:240,fps=12",
 
         "-c:v", "libx264",
-        "-preset", "veryfast",
+        "-profile:v", "baseline",
+        "-level", "3.0",
+        "-preset", "ultrafast",
         "-tune", "zerolatency",
-        "-b:v", "150k",
-        "-maxrate", "180k",
-        "-bufsize", "300k",
 
-        # ✅ FIXED FORMAT
+        # 🔻 lowest SAFE 240p bitrate
+        "-b:v", "60k",
+        "-maxrate", "65k",
+        "-bufsize", "120k",
+
+        # streaming-friendly GOP
+        "-g", "24",
+        "-keyint_min", "24",
+        "-sc_threshold", "0",
+
+        "-pix_fmt", "yuv420p",
+
+        # stream-safe container
         "-f", "mpegts",
         "pipe:1"
-    ]
+        ]
 
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     try:
