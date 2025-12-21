@@ -1,19 +1,28 @@
 #!/usr/bin/env python3
+import os
 import time
-import random
 import logging
+import random
 import requests
 import subprocess
 from flask import Flask, Response, render_template_string, abort, stream_with_context, request
 
 # ============================================================
-# BASIC SETUP
+# Basic Setup
 # ============================================================
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s"
+)
+
 app = Flask(__name__)
 
 REFRESH_INTERVAL = 1800
+LOGO_FALLBACK = "https://iptv-org.github.io/assets/logo.png"
 
+# ============================================================
+# PLAYLISTS (QUALITY REMOVED) - UPDATED WITH MANY LANGUAGES
+# ============================================================
 PLAYLISTS = {
     "all": "https://iptv-org.github.io/iptv/index.m3u",
 
@@ -63,312 +72,316 @@ CACHE = {}
 # ============================================================
 # M3U PARSER
 # ============================================================
-def parse_m3u(text):
+def parse_extinf(line: str):
+    if "," in line:
+        left, title = line.split(",", 1)
+    else:
+        left, title = line, ""
+
+    attrs = {}
+    pos = 0
+    while True:
+        eq = left.find("=", pos)
+        if eq == -1:
+            break
+        key_end = eq
+        key_start = left.rfind(" ", 0, key_end)
+        colon = left.rfind(":", 0, key_end)
+        if colon > key_start:
+            key_start = colon
+        key = left[key_start + 1:key_end].strip()
+
+        if eq + 1 < len(left) and left[eq + 1] == '"':
+            val_start = eq + 2
+            val_end = left.find('"', val_start)
+            if val_end == -1:
+                break
+            val = left[val_start:val_end]
+            pos = val_end + 1
+        else:
+            val_end = left.find(" ", eq + 1)
+            if val_end == -1:
+                val_end = len(left)
+            val = left[eq + 1:val_end].strip()
+            pos = val_end
+
+        attrs[key] = val
+    return attrs, title.strip()
+
+def parse_m3u(text: str):
     lines = [l.strip() for l in text.splitlines() if l.strip()]
-    out = []
+    channels = []
     i = 0
     while i < len(lines):
         if lines[i].startswith("#EXTINF"):
-            title = lines[i].split(",", 1)[-1]
-            url = lines[i + 1] if i + 1 < len(lines) else None
-            if url and not url.startswith("#"):
-                out.append({"title": title, "url": url})
-            i += 2
+            attrs, title = parse_extinf(lines[i])
+            j = i + 1
+            url = None
+            while j < len(lines):
+                if not lines[j].startswith("#"):
+                    url = lines[j]
+                    break
+                j += 1
+            if url:
+                channels.append({
+                    "title": title or attrs.get("tvg-name") or "Unknown",
+                    "url": url,
+                    "logo": attrs.get("tvg-logo") or "",
+                    "group": attrs.get("group-title") or "",
+                    "tvg_id": attrs.get("tvg-id") or "",
+                })
+            i = j + 1
         else:
             i += 1
-    return out
+    return channels
 
-def get_channels(name):
+# ============================================================
+# Cache Loader
+# ============================================================
+def get_channels(name: str):
     now = time.time()
-    if name in CACHE and now - CACHE[name]["time"] < REFRESH_INTERVAL:
-        return CACHE[name]["channels"]
+    cached = CACHE.get(name)
+    if cached and now - cached.get("time", 0) < REFRESH_INTERVAL:
+        return cached["channels"]
 
-    r = requests.get(PLAYLISTS[name], timeout=25)
-    ch = parse_m3u(r.text)
-    CACHE[name] = {"time": now, "channels": ch}
-    return ch
+    url = PLAYLISTS.get(name)
+    if not url:
+        logging.error("Playlist not found: %s", name)
+        return []
+
+    logging.info("[%s] Fetching playlist: %s", name, url)
+    try:
+        resp = requests.get(url, timeout=25)
+        resp.raise_for_status()
+        channels = parse_m3u(resp.text)
+        CACHE[name] = {"time": now, "channels": channels}
+        logging.info("[%s] Loaded %d channels", name, len(channels))
+        return channels
+    except Exception as e:
+        logging.error("Load failed %s: %s", name, e)
+        return []
 
 # ============================================================
-# VIDEO-ONLY TRANSCODER (NO AUDIO, 144p ~40kbps)
+# Audio-only proxy
 # ============================================================
-def proxy_video_no_audio(url):
-
+def proxy_audio_only(source_url: str):
     cmd = [
-        "ffmpeg",
-        "-loglevel", "quiet",
-        "-i", url,
-
-        # CLEAR 240p
-        "-vf", "scale=426:240:flags=lanczos",
-        "-r", "18",
-        "-c:v", "libx264",
-        "-preset", "veryfast",
-        "-profile:v", "baseline",
-        "-level", "3.0",
-        "-pix_fmt", "yuv420p",
-        "-b:v", "150k",
-        "-maxrate", "170k",
-        "-bufsize", "400k",
-        "-g", "36",
-
-        # Low but clean audio
-        "-c:a", "aac",
-        "-b:a", "24k",
-        "-ac", "1",
-        "-ar", "22050",
-
-        "-f", "mpegts",
-        "pipe:1"
-    ]
-
-    def generate():
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE)
+            "ffmpeg", "-i", url,
+            "-vn",          # no video
+            "-ac", "1",     # mono
+            "-b:a", "40k",  # 40kbps
+            "-f", "mp3",
+            "pipe:1"
+        ]
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         try:
-            while True:
-                chunk = proc.stdout.read(1024)
+            # Stream in chunks of 1024 bytes
+            for chunk in iter(lambda: proc.stdout.read(1024), b''):
                 if not chunk:
                     break
                 yield chunk
         finally:
-            proc.kill()
+            proc.terminate()
+            proc.wait()
 
+    # Return a streaming response
     return Response(
-        stream_with_context(generate()),
-        mimetype="video/mp2t"
+        generate(),
+        mimetype="audio/mpeg",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+        }
     )
 
-@app.route("/search")
-def search():
-    q = request.args.get("q","").lower().strip()
-    if not q:
-        return []
-
-    results = []
-    for g in PLAYLISTS:
-        for c in get_channels(g):
-            if q in c["title"].lower():
-                results.append({
-                    "title": c["title"],
-                    "url": c["url"]
-                })
-            if len(results) >= 50:
-                break
-    return results
 # ============================================================
-# HTML
+# HTML TEMPLATES
 # ============================================================
 HOME_HTML = """<!doctype html>
 <html>
 <head>
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{{ title }}</title>
-
+<title>IPTV Restream</title>
 <style>
-body{
-    background:#000;
-    color:#0f0;
-    margin:0;
-    font-family:Arial;
-    padding:10px;
-    text-align:center;
-}
-video{
-    width:100%;
-    height:auto;
-    max-height:85vh;
-    border:2px solid #0f0;
-    margin-top:10px;
-}
-.btn{
-    display:inline-block;
-    padding:10px 16px;
-    border:2px solid #0f0;
-    color:#0f0;
-    border-radius:8px;
-    text-decoration:none;
-    cursor:pointer;
-    margin:6px;
-    font-size:16px;
-}
-.btn:hover{
-    background:#0f0;
-    color:#000;
-}
-#urlBox{
-    width:92%;
-    padding:10px;
-    font-size:14px;
-    border-radius:6px;
-    border:2px solid #0f0;
-    background:#111;
-    color:#0f0;
-    margin-top:12px;
-}
-.copy-btn{
-    padding:10px 16px;
-    border:2px solid #0f0;
-    border-radius:6px;
-    color:#0f0;
-    background:#111;
-    margin-top:8px;
-}
-.copy-btn:hover{
-    background:#0f0;
-    color:#000;
-}
+body{background:#000;color:#0f0;font-family:Arial;padding:16px}
+a{color:#0f0;text-decoration:none;border:1px solid #0f0;padding:10px;margin:8px;border-radius:8px;display:inline-block}
+a:hover{background:#0f0;color:#000}
+.search-btn{display:inline-block;padding:8px;border:1px solid #0f0;border-radius:8px;margin-left:8px}
 </style>
 </head>
-
 <body>
+<h2>🌐 IPTV</h2>
 
-<h3>{{ title }}</h3>
+<a href="/random" style="background:#0f0;color:#000">🎲 Random Channel</a>
+<a href="/favourites" style="border-color:yellow;color:yellow">⭐ Favourites</a>
 
-<!-- ACTION BUTTONS -->
-<div>
-  <button class="btn" onclick="reloadVideo()">🔄 Reload</button>
-  <button class="btn" style="border-color:yellow;color:yellow;" onclick="addFav()">⭐ Favourite</button>
-  <a class="btn" href="/">🏠 Home</a>
-</div>
+<form action="/search" method="get" style="display:inline-block;margin-left:8px;">
+  <input id="home-search" name="q" placeholder="Search..." style="padding:8px;border-radius:6px;background:#111;border:1px solid #0f0;color:#0f0">
+  <button class="search-btn" type="submit">🔍</button>
+</form>
 
-<!-- STREAM URL -->
-<div>
-  <input id="urlBox" value="{{ stream }}" readonly>
-  <br>
-  <button class="copy-btn" onclick="copyURL()">📋 Copy Stream URL</button>
-</div>
-
-<!-- VIDEO PLAYER -->
-<video id="vid" controls autoplay playsinline>
-  <source src="{{ stream }}" type="video/mp2t">
-  Your browser does not support video playback.
-</video>
-
-<script>
-function reloadVideo(){
-    const v = document.getElementById("vid");
-    v.pause();
-    v.load();
-    v.play();
-}
-
-function addFav(){
-    let f = JSON.parse(localStorage.getItem('favs') || '[]');
-    const t = "{{ title }}";
-    const u = "{{ stream }}";
-
-    if (!f.find(x => x.url === u)) {
-        f.push({title:t, url:u});
-        localStorage.setItem('favs', JSON.stringify(f));
-        alert("Added to favourites");
-    } else {
-        alert("Already in favourites");
-    }
-}
-
-function copyURL(){
-    const box = document.getElementById("urlBox");
-    box.select();
-    box.setSelectionRange(0, 99999); // mobile
-    navigator.clipboard.writeText(box.value);
-    alert("Stream URL copied");
-}
-</script>
-
+<p>Select a category:</p>
+{% for key, url in playlists.items() %}
+<a href="/list/{{ key }}">{{ key|capitalize }}</a>
+{% endfor %}
 </body>
 </html>"""
 
-
-LIST_HTML = """
-<!doctype html>
+LIST_HTML = """<!doctype html>
 <html>
 <head>
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{ group|capitalize }} Channels</title>
+<style>
+body{background:#000;color:#0f0;font-family:Arial;padding:12px}
+.card{display:flex;align-items:center;gap:10px;border:1px solid #0f0;border-radius:8px;padding:8px;margin:8px 0;background:#111}
+.card img{width:42px;height:42px;background:#222;border-radius:6px}
+a.btn{border:1px solid #0f0;color:#0f0;padding:6px 8px;border-radius:6px;text-decoration:none;margin-right:8px}
+a.btn:hover{background:#0f0;color:#000}
+button.k{padding:6px 8px;border-radius:6px;border:1px solid #0f0;background:#111;color:#0f0;margin-left:6px}
+input#search{width:60%;padding:8px;border-radius:6px;border:1px solid #0f0;background:#111;color:#0f0}
+.keypad{margin-top:8px}
+.kbtn{padding:8px;width:36px;border-radius:6px;margin:2px;border:1px solid #0f0;background:#111;color:#0f0}
+</style>
 </head>
+<body>
+<h3>{{ group|capitalize }} Channels</h3>
+<a href="/">← Back</a>
+<a class="btn" href="/random/{{ group }}" style="background:#0f0;color:#000">🎲 Random</a>
 
-<body style="background:#000;color:#0f0;font-family:Arial;font-size:22px;padding:14px">
-
-<h2>{{group|upper}}</h2>
-
-<a href="/" style="display:inline-block;padding:14px 18px;border:3px solid #0f0;margin-bottom:14px;font-size:22px">
-← Home
-</a>
-
-<!-- SEARCH BAR -->
-<div style="display:flex;gap:10px;margin:16px 0">
-  <input id="search"
-         placeholder="Search channel name..."
-         style="flex:1;padding:16px;font-size:22px;
-                background:#000;color:#0f0;border:3px solid #0f0">
-
-  <button onclick="doSearch()"
-          style="padding:16px 22px;
-                 font-size:24px;
-                 border:3px solid #0f0;
-                 background:#000;color:#0f0">
-    🔍
-  </button>
+<div style="margin-top:10px;">
+  <input id="search" placeholder="Type or use keypad..." >
+  <button class="k" onclick="doSearch()">🔍</button>
+  <button class="k" onclick="clearSearch()">✖</button>
 </div>
 
-<div id="list">
-{% for c in channels %}
-<div class="item"
-     data-title="{{c.title|lower}}"
-     style="border:3px solid #0f0;padding:16px;margin:14px 0">
+<div id="channelList" style="margin-top:12px;">
+{% for ch in channels %}
+<div class="card" data-url="{{ ch.url }}" data-title="{{ ch.title }}">
+  <div style="font-size:20px;width:40px;text-align:center;color:#0f0">{{ loop.index }}.</div>
 
-  <div style="font-size:24px;margin-bottom:10px">
-    {{loop.index}}. {{c.title}}
+  <img src="{{ ch.logo or fallback }}" onerror="this.src='{{ fallback }}'">
+
+  <div style="flex:1">
+    <strong>{{ ch.title }}</strong>
+    <div style="margin-top:6px">
+      <a class="btn" href="/watch/{{ group }}/{{ loop.index0 }}" target="_blank">▶️</a>
+      <a class="btn" href="/play-audio/{{ group }}/{{ loop.index0 }}" target="_blank">🎧</a>
+      <button class="k" onclick='addFav("{{ ch.title|replace('"','&#34;') }}","{{ ch.url }}","{{ ch.logo }}")'>⭐</button>
+    </div>
   </div>
-
-  <a href="/watch/{{group}}/{{loop.index0}}"
-     style="display:inline-block;padding:14px 18px;
-            border:3px solid #0f0;font-size:22px">
-    ▶ Watch
-  </a>
-
-  <button onclick='addFav("{{c.title}}","{{c.url}}")'
-          style="padding:14px 18px;
-                 border:3px solid yellow;
-                 background:#000;color:yellow;
-                 font-size:22px;margin-left:10px">
-    ⭐ Fav
-  </button>
 </div>
 {% endfor %}
 </div>
 
 <script>
-function addFav(title,url){
-  let f = JSON.parse(localStorage.getItem('favs')||'[]');
-  if(!f.find(x=>x.url===url)){
-    f.push({title:title,url:url});
-    localStorage.setItem('favs',JSON.stringify(f));
-    alert("Added to favourites");
-  } else {
-    alert("Already added");
-  }
+/* keypad + search integration */
+function updateSearch(ch){
+  const inp = document.getElementById('search');
+  inp.value = inp.value + ch;
+  // do not auto-filter — user will press 🔍 (doSearch)
+}
+
+function clearSearch(){
+  document.getElementById('search').value = '';
 }
 
 function doSearch(){
-  let q = document.getElementById("search").value.toLowerCase().trim();
-  let items = document.querySelectorAll(".item");
-
-  items.forEach(el=>{
-    if(!q || el.dataset.title.includes(q)){
-      el.style.display = "";
-    } else {
-      el.style.display = "none";
-    }
-  });
+  const q = document.getElementById('search').value.trim();
+  if(!q) {
+    alert("Type something to search");
+    return;
+  }
+  // go to the flat search results page
+  window.location = '/search?q=' + encodeURIComponent(q);
 }
 
-// ENTER key triggers search
-document.getElementById("search").addEventListener("keydown", function(e){
-  if(e.key === "Enter"){
-    doSearch();
+/* favourites client-side */
+function addFav(title, url, logo){
+  let f = JSON.parse(localStorage.getItem('favs') || '[]');
+  // prevent duplicates
+  if (!f.find(x => x.url === url)) {
+    f.push({title:title, url:url, logo:logo});
+    localStorage.setItem('favs', JSON.stringify(f));
+    alert('Added to favourites');
+  } else {
+    alert('Already in favourites');
   }
+}
+</script>
+</body>
+</html>
+"""
+
+SEARCH_HTML = """<!doctype html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Search results</title>
+<style>
+body{background:#000;color:#0f0;font-family:Arial;padding:12px}
+.card{display:flex;align-items:center;gap:10px;border:1px solid #0f0;border-radius:8px;padding:8px;margin:8px 0;background:#111}
+.card img{width:42px;height:42px;background:#222;border-radius:6px}
+a.btn{border:1px solid #0f0;color:#0f0;padding:6px 8px;border-radius:6px;text-decoration:none;margin-right:8px}
+button.k{padding:6px 8px;border-radius:6px;border:1px solid #0f0;background:#111;color:#0f0;margin-left:6px}
+input#q{width:70%;padding:8px;border-radius:6px;border:1px solid #0f0;background:#111;color:#0f0}
+</style>
+</head>
+<body>
+<h3>Search results for: "<span id="term">{{ query }}</span>"</h3>
+<a href="/">← Back</a>
+
+<div style="margin-top:10px;">
+  <input id="q" value="{{ query }}" placeholder="Search..." >
+  <button class="k" onclick="goSearch()">🔍</button>
+  <button class="k" onclick="clearBox()">✖</button>
+</div>
+
+<div id="results" style="margin-top:12px;">
+{% if results %}
+  {% for r in results %}
+    <div class="card">
+      <img src="{{ r.logo or fallback }}" onerror="this.src='{{ fallback }}'">
+      <div style="flex:1">
+        <strong>{{ r.title }}</strong>
+        <div style="margin-top:6px">
+          <a class="btn" href="/watch/all/{{ r.index }}" target="_blank">▶ Watch</a>
+          <a class="btn" href="/play-audio/all/{{ r.index }}" target="_blank">🎧 Audio</a>
+          <button class="k" onclick='addFav("{{ r.title|replace('"','&#34;') }}","{{ r.url }}","{{ r.logo }}")'>⭐</button>
+        </div>
+      </div>
+    </div>
+  {% endfor %}
+{% else %}
+  <div style="padding:16px;border:1px solid #0f0;border-radius:8px">No results found.</div>
+{% endif %}
+</div>
+
+<script>
+function goSearch(){
+  const q = document.getElementById('q').value.trim();
+  if(!q){ alert("Type something"); return; }
+  window.location = '/search?q=' + encodeURIComponent(q);
+}
+function clearBox(){ document.getElementById('q').value = ''; }
+
+// favourites (same as other pages)
+function addFav(title, url, logo){
+  let f = JSON.parse(localStorage.getItem('favs') || '[]');
+  if (!f.find(x => x.url === url)) {
+    f.push({title:title, url:url, logo:logo});
+    localStorage.setItem('favs', JSON.stringify(f));
+    alert('Added to favourites');
+  } else {
+    alert('Already in favourites');
+  }
+}
+
+/* allow pressing Enter key to search */
+document.getElementById('q').addEventListener('keydown', function(e){
+  if(e.key === 'Enter'){ goSearch(); }
 });
 </script>
-
 </body>
 </html>
 """
@@ -487,38 +500,63 @@ function copyURL(){
 </body>
 </html>"""
 
-FAV_HTML = """
-<!doctype html>
+FAV_HTML = """<!doctype html>
 <html>
-<body style="background:#000;color:#0f0;font-family:Arial;font-size:20px;padding:12px">
+<head>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Favourites</title>
+<style>
+body{background:#000;color:#0f0;font-family:Arial;padding:12px}
+.card{display:flex;align-items:center;gap:10px;border:1px solid yellow;border-radius:8px;padding:8px;margin:8px 0;background:#111}
+.card img{width:42px;height:42px;background:#222;border-radius:6px}
+a.btn{border:1px solid yellow;color:yellow;padding:6px 8px;border-radius:6px;text-decoration:none;margin-right:8px}
+a.btn:hover{background:yellow;color:#000}
+</style>
+</head>
+<body>
 <h2>⭐ Favourites</h2>
-<a href="/" style="padding:10px;border:2px solid #0f0;display:inline-block;margin-bottom:12px">← Home</a>
-<div id="list"></div>
+<a href="/">← Back</a>
+
+<div id="favList" style="margin-top:12px;"></div>
 
 <script>
-function load(){
-  let f = JSON.parse(localStorage.getItem('favs')||'[]');
-  let h='';
-  if(!f.length) h='<p>No favourites</p>';
+function loadFavs(){
+  let f = JSON.parse(localStorage.getItem('favs') || '[]');
+  let html = "";
   f.forEach((c,i)=>{
-    h+=`
-    <div style="border:2px solid yellow;padding:12px;margin:10px 0">
-      <div>${i+1}. ${c.title}</div>
-      <a href="/watch-direct?title=${encodeURIComponent(c.title)}&url=${encodeURIComponent(c.url)}"
-         style="display:inline-block;padding:10px;border:2px solid yellow;color:yellow;margin-top:8px">▶ Watch</a>
-      <button onclick="del(${i})"
-              style="padding:10px;border:2px solid red;background:#000;color:red;margin-left:10px">✖ Remove</button>
+    html += `
+    <div class="card">
+      <img src="${c.logo||''}" onerror="this.src='${'""" + LOGO_FALLBACK + """'}'">
+      
+      <!-- delete button on right side -->
+      <button onclick="delFav(${i})" 
+              style="background:#000;color:red;border:1px solid red;
+                     border-radius:6px;padding:4px 10px;font-size:20px;
+                     cursor:pointer;">
+        ×
+      </button>
+
+      <div style="flex:1">
+        <strong>${c.title}</strong>
+        <div style="margin-top:6px">
+          <a class="btn"
+             href="/watch-direct?title=${encodeURIComponent(c.title)}&url=${encodeURIComponent(c.url)}&logo=${encodeURIComponent(c.logo)}"
+             target="_blank">▶ Watch</a>
+          <a class="btn" href="/play-audio/fav/${i}" target="_blank">🎧 Audio</a>
+        </div>
+      </div>
     </div>`;
   });
-  document.getElementById('list').innerHTML=h;
+  document.getElementById('favList').innerHTML = html;
 }
-function del(i){
-  let f=JSON.parse(localStorage.getItem('favs')||'[]');
-  f.splice(i,1);
-  localStorage.setItem('favs',JSON.stringify(f));
-  load();
+
+function delFav(index){
+  let f = JSON.parse(localStorage.getItem('favs') || '[]');
+  f.splice(index, 1);
+  localStorage.setItem('favs', JSON.stringify(f));
+  loadFavs();
 }
-load();
+loadFavs();
 </script>
 </body>
 </html>
@@ -527,6 +565,7 @@ load();
 # ============================================================
 # ROUTES
 # ============================================================
+
 @app.route("/")
 def home():
     return render_template_string(HOME_HTML, playlists=PLAYLISTS)
@@ -535,40 +574,137 @@ def home():
 def list_group(group):
     if group not in PLAYLISTS:
         abort(404)
-    return render_template_string(LIST_HTML, group=group, channels=get_channels(group))
-
-@app.route("/watch/<group>/<int:idx>")
-def watch(group, idx):
-    ch = get_channels(group)[idx]
-    return render_template_string(WATCH_HTML, title=ch["title"], stream="/stream?u=" + ch["url"])
-
-@app.route("/watch-direct")
-def watch_direct():
-    return render_template_string(
-        WATCH_HTML,
-        title=request.args.get("title","Channel"),
-        stream="/stream?u=" + request.args.get("url")
-    )
-
-@app.route("/stream")
-def stream():
-    u = request.args.get("u")
-    if not u:
-        abort(404)
-    return proxy_video_no_audio(u)
-
-@app.route("/random")
-def random_watch():
-    ch = random.choice(get_channels("all"))
-    return render_template_string(WATCH_HTML, title=ch["title"], stream="/stream?u=" + ch["url"])
+    channels = get_channels(group)
+    return render_template_string(LIST_HTML, group=group, channels=channels, fallback=LOGO_FALLBACK)
 
 @app.route("/favourites")
 def favourites():
     return render_template_string(FAV_HTML)
 
+@app.route("/search")
+def search():
+    q = request.args.get("q", "").strip()
+    # if no query, show page with empty results
+    if not q:
+        return render_template_string(SEARCH_HTML, query="", results=[], fallback=LOGO_FALLBACK)
+
+    ql = q.lower()
+    # search in the 'all' playlist for a flat list
+    all_channels = get_channels("all")
+    results = []
+    for idx, ch in enumerate(all_channels):
+        title = (ch.get("title") or "").lower()
+        group = (ch.get("group") or "").lower()
+        # match against title or group or url
+        if ql in title or ql in group or ql in (ch.get("url") or "").lower():
+            results.append({
+                "index": idx,
+                "title": ch.get("title"),
+                "url": ch.get("url"),
+                "logo": ch.get("logo"),
+            })
+    return render_template_string(SEARCH_HTML, query=q, results=results, fallback=LOGO_FALLBACK)
+
+@app.route("/random")
+def random_global():
+    channels = get_channels("all")
+    if not channels:
+        abort(404)
+    ch = random.choice(channels)
+    url = ch["url"]
+    mime = "application/vnd.apple.mpegurl" if ".m3u8" in url else "video/mp4"
+    return render_template_string(WATCH_HTML, channel=ch, mime_type=mime)
+
+@app.route("/random/<group>")
+def random_category(group):
+    if group not in PLAYLISTS:
+        abort(404)
+    channels = get_channels(group)
+    if not channels:
+        abort(404)
+    ch = random.choice(channels)
+    url = ch["url"]
+    mime = "application/vnd.apple.mpegurl" if ".m3u8" in url else "video/mp4"
+    return render_template_string(WATCH_HTML, channel=ch, mime_type=mime)
+
+@app.route("/watch/<group>/<int:idx>")
+def watch_channel(group, idx):
+    if group not in PLAYLISTS:
+        abort(404)
+    channels = get_channels(group)
+    if idx < 0 or idx >= len(channels):
+        abort(404)
+    ch = channels[idx]
+    url = ch["url"]
+    mime = "application/vnd.apple.mpegurl" if ".m3u8" in url else "video/mp4"
+    return render_template_string(WATCH_HTML, channel=ch, mime_type=mime)
+
+@app.route("/play-audio/<group>/<int:idx>")
+def play_channel_audio(group, idx):
+    if group not in PLAYLISTS:
+        abort(404)
+    channels = get_channels(group)
+    if idx < 0 or idx >= len(channels):
+        abort(404)
+    ch = channels[idx]
+
+    def gen():
+        for chunk in proxy_audio_only(ch["url"]):
+            yield chunk
+
+    headers = {"Access-Control-Allow-Origin": "*"}
+    return Response(stream_with_context(gen()), mimetype="audio/mpeg", headers=headers)
+
+@app.route("/watch/fav/<int:index>")
+def watch_fav(index):
+    try:
+        channel = favorites[index]  # your saved favorites list
+    except IndexError:
+        return "Favorite not found", 404
+
+    mime_type = "application/x-mpegURL" if channel['url'].endswith('.m3u8') else "video/mp4"
+    return render_template_string(WATCH_HTML, channel=channel, mime_type=mime_type)
+
+
+@app.route("/play-audio/fav/<int:index>")
+def play_audio_fav(index):
+    return """
+    <script>
+    let f = JSON.parse(localStorage.getItem('favs'))[%d];
+    window.location = '/play-audio-direct?u=' + encodeURIComponent(f.url);
+    </script>
+    """ % index
+
+@app.route("/play-audio-direct")
+def play_audio_direct():
+    u = request.args.get("u")
+    if not u:
+        abort(404)
+    return Response(stream_with_context(proxy_audio_only(u)),
+                    mimetype="audio/mpeg")
+
+@app.route("/watch-direct")
+def watch_direct():
+    title = request.args.get("title", "Channel")
+    url = request.args.get("url")
+    logo = request.args.get("logo", "")
+
+    if not url:
+        return "Invalid URL", 400
+
+    mime = "application/vnd.apple.mpegurl" if ".m3u8" in url else "video/mp4"
+
+    channel = {
+        "title": title,
+        "url": url,
+        "logo": logo
+    }
+
+    return render_template_string(WATCH_HTML, channel=channel, mime_type=mime)
+
 # ============================================================
-# ENTRY
+# Entry
 # ============================================================
 if __name__ == "__main__":
-    print("Running on http://0.0.0.0:8000")
-    app.run(host="0.0.0.0", port=8000, threaded=True)
+    print("Running IPTV Restream on http://0.0.0.0:8000")
+    app.run(host="0.0.0.0", port=8000, debug=False, threaded=True)
