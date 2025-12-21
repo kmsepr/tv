@@ -513,7 +513,7 @@ function loadFavs(){
    target="_blank">▶ Watch</a>
 
 <a class="btn"
-   href="/watch-240p-direct?u=${encodeURIComponent(c.url)}"
+   href="/watch-240p-direct?u=${encodeURIComponent(c.url)}&title=${encodeURIComponent(c.title)}&logo=${encodeURIComponent(c.logo)}"
    target="_blank">📉 240p</a>
         </div>
       </div>
@@ -769,6 +769,7 @@ def watch_240p_direct():
 
     channel = {
         "title": title + " (240p)",
+        # ⚠️ IMPORTANT: source MUST be play-240p-direct
         "url": f"/play-240p-direct?u={u}",
         "logo": logo
     }
