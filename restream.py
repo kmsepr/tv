@@ -92,6 +92,24 @@ def proxy_video_no_audio(url):
         mimetype="video/mp2t"
     )
 
+
+@app.route("/search")
+def search():
+    q = request.args.get("q","").lower().strip()
+    if not q:
+        return []
+
+    results = []
+    for g in PLAYLISTS:
+        for c in get_channels(g):
+            if q in c["title"].lower():
+                results.append({
+                    "title": c["title"],
+                    "url": c["url"]
+                })
+            if len(results) >= 50:
+                break
+    return results
 # ============================================================
 # HTML
 # ============================================================
@@ -108,7 +126,7 @@ HOME_HTML = """
 
 <!-- SEARCH BAR -->
 <div style="display:flex;gap:10px;margin:16px 0">
-  <input id="search"
+  <input id="q"
          placeholder="Search channels..."
          style="flex:1;padding:18px;font-size:24px;
                 background:#000;color:#0f0;border:3px solid #0f0">
@@ -122,7 +140,6 @@ HOME_HTML = """
   </button>
 </div>
 
-<!-- SEARCH RESULTS -->
 <div id="results"></div>
 
 <hr style="border:2px solid #0f0;margin:20px 0">
@@ -142,56 +159,39 @@ HOME_HTML = """
 {% endfor %}
 
 <script>
-let ALL = [];
-
-function loadAll(){
-  if(ALL.length) return;
-  Promise.all(
-    {{ playlists|tojson }} && Object.keys({{ playlists|tojson }}).map(g =>
-      fetch("/list/"+g).then(r=>r.text())
-    )
-  );
-}
-
-// simple client-side index using embedded data
-{% for g in playlists %}
-{% for c in get_channels(g) %}
-ALL.push({title:"{{c.title|escape}}", url:"{{c.url}}"});
-{% endfor %}
-{% endfor %}
-
 function doSearch(){
-  let q = document.getElementById("search").value.toLowerCase().trim();
-  let out = document.getElementById("results");
-  out.innerHTML = "";
+  let q = document.getElementById("q").value.trim();
+  let box = document.getElementById("results");
+  box.innerHTML = "";
 
   if(!q) return;
 
-  let res = ALL.filter(c => c.title.toLowerCase().includes(q)).slice(0, 50);
-
-  if(!res.length){
-    out.innerHTML = "<p>No results</p>";
-    return;
-  }
-
-  res.forEach((c,i)=>{
-    out.innerHTML += `
-    <div style="border:3px solid #0f0;padding:16px;margin:14px 0">
-      <div style="font-size:26px;margin-bottom:10px">${i+1}. ${c.title}</div>
-      <a href="/watch-direct?title=${encodeURIComponent(c.title)}&url=${encodeURIComponent(c.url)}"
-         style="display:inline-block;padding:16px 20px;
-                border:3px solid #0f0;font-size:22px">
-        ▶ Watch
-      </a>
-      <button onclick='addFav("${c.title.replace(/"/g,'&quot;')}","${c.url}")'
-              style="padding:16px 20px;
-                     border:3px solid yellow;
-                     background:#000;color:yellow;
-                     font-size:22px;margin-left:10px">
-        ⭐ Fav
-      </button>
-    </div>`;
-  });
+  fetch("/search?q="+encodeURIComponent(q))
+    .then(r=>r.json())
+    .then(res=>{
+      if(!res.length){
+        box.innerHTML="<p>No results</p>";
+        return;
+      }
+      res.forEach((c,i)=>{
+        box.innerHTML += `
+        <div style="border:3px solid #0f0;padding:16px;margin:14px 0">
+          <div style="font-size:26px;margin-bottom:10px">${i+1}. ${c.title}</div>
+          <a href="/watch-direct?title=${encodeURIComponent(c.title)}&url=${encodeURIComponent(c.url)}"
+             style="display:inline-block;padding:16px 20px;
+                    border:3px solid #0f0;font-size:22px">
+            ▶ Watch
+          </a>
+          <button onclick='addFav("${c.title.replace(/"/g,'&quot;')}","${c.url}")'
+                  style="padding:16px 20px;
+                         border:3px solid yellow;
+                         background:#000;color:yellow;
+                         font-size:22px;margin-left:10px">
+            ⭐ Fav
+          </button>
+        </div>`;
+      });
+    });
 }
 
 function addFav(title,url){
@@ -199,14 +199,11 @@ function addFav(title,url){
   if(!f.find(x=>x.url===url)){
     f.push({title:title,url:url});
     localStorage.setItem('favs',JSON.stringify(f));
-    alert("Added to favourites");
-  } else {
-    alert("Already added");
+    alert("Added");
   }
 }
 
-// ENTER triggers search
-document.getElementById("search").addEventListener("keydown", e=>{
+document.getElementById("q").addEventListener("keydown", e=>{
   if(e.key==="Enter") doSearch();
 });
 </script>
