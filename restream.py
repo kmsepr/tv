@@ -72,7 +72,7 @@ def proxy_video_no_audio(url):
         "-g", "30",
         "-f", "mpegts",
         "pipe:1"
-    ]
+         ]
 
     def generate():
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
