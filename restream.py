@@ -62,16 +62,24 @@ def proxy_video_no_audio(url):
         "ffmpeg",
         "-loglevel", "quiet",
         "-i", url,
-        "-an",
+
+        # Video (≈44 kbps)
         "-vf", "scale=256:144",
-        "-r", "15",
+        "-r", "12",
         "-c:v", "libx264",
         "-preset", "ultrafast",
         "-tune", "zerolatency",
-        "-b:v", "40k",
-        "-maxrate", "40k",
-        "-bufsize", "240k",
-        "-g", "30",
+        "-b:v", "44k",
+        "-maxrate", "44k",
+        "-bufsize", "200k",
+        "-g", "24",
+
+        # Audio (≈16 kbps)
+        "-c:a", "aac",
+        "-b:a", "16k",
+        "-ac", "1",
+        "-ar", "16000",
+
         "-f", "mpegts",
         "pipe:1"
     ]
@@ -91,7 +99,6 @@ def proxy_video_no_audio(url):
         stream_with_context(generate()),
         mimetype="video/mp2t"
     )
-
 
 @app.route("/search")
 def search():
