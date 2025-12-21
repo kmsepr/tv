@@ -54,13 +54,15 @@ def get_channels(name):
     return ch
 
 # ============================================================
-# VIDEO-ONLY TRANSCODER (NO AUDIO, ~40kbps)
+# VIDEO-ONLY TRANSCODER (NO AUDIO, 144p ~40kbps)
 # ============================================================
 def proxy_video_no_audio(url):
-        cmd = [
+
+    cmd = [
         "ffmpeg",
+        "-loglevel", "quiet",
         "-i", url,
-        "-an",                     # 🔇 NO AUDIO
+        "-an",
         "-vf", "scale=256:144",
         "-r", "15",
         "-c:v", "libx264",
@@ -72,10 +74,10 @@ def proxy_video_no_audio(url):
         "-g", "30",
         "-f", "mpegts",
         "pipe:1"
-         ]
+    ]
 
     def generate():
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE)
         try:
             while True:
                 chunk = proc.stdout.read(1024)
@@ -83,9 +85,12 @@ def proxy_video_no_audio(url):
                     break
                 yield chunk
         finally:
-            proc.terminate()
+            proc.kill()
 
-    return Response(generate(), mimetype="video/mp2t")
+    return Response(
+        stream_with_context(generate()),
+        mimetype="video/mp2t"
+    )
 
 # ============================================================
 # HTML
@@ -128,7 +133,7 @@ function addFav(title,url){
   if(!f.find(x=>x.url===url)){
     f.push({title:title,url:url});
     localStorage.setItem('favs',JSON.stringify(f));
-    alert("Added to favourites");
+    alert("Added");
   } else {
     alert("Already added");
   }
@@ -152,7 +157,7 @@ video{width:100%;max-height:92vh;border:2px solid #0f0}
 <body>
 <h3 style="text-align:center">{{title}}</h3>
 <video controls autoplay playsinline>
-  <source src="{{stream}}" type="video/mp4">
+  <source src="{{stream}}" type="video/mp2t">
 </video>
 </body>
 </html>
@@ -206,20 +211,12 @@ def home():
 def list_group(group):
     if group not in PLAYLISTS:
         abort(404)
-    return render_template_string(
-        LIST_HTML,
-        group=group,
-        channels=get_channels(group)
-    )
+    return render_template_string(LIST_HTML, group=group, channels=get_channels(group))
 
 @app.route("/watch/<group>/<int:idx>")
 def watch(group, idx):
     ch = get_channels(group)[idx]
-    return render_template_string(
-        WATCH_HTML,
-        title=ch["title"],
-        stream="/stream?u=" + ch["url"]
-    )
+    return render_template_string(WATCH_HTML, title=ch["title"], stream="/stream?u=" + ch["url"])
 
 @app.route("/watch-direct")
 def watch_direct():
@@ -234,19 +231,12 @@ def stream():
     u = request.args.get("u")
     if not u:
         abort(404)
-    return Response(
-        stream_with_context(proxy_video_no_audio(u)),
-        mimetype="video/mp4"
-    )
+    return proxy_video_no_audio(u)
 
 @app.route("/random")
 def random_watch():
     ch = random.choice(get_channels("all"))
-    return render_template_string(
-        WATCH_HTML,
-        title=ch["title"],
-        stream="/stream?u=" + ch["url"]
-    )
+    return render_template_string(WATCH_HTML, title=ch["title"], stream="/stream?u=" + ch["url"])
 
 @app.route("/favourites")
 def favourites():
