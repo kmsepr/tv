@@ -57,9 +57,6 @@ def get_channels(name):
 # VIDEO-ONLY TRANSCODER (NO AUDIO, 144p ~40kbps)
 # ============================================================
 def proxy_video_no_audio(url):
-
-    def proxy_video_no_audio(url):
-
     cmd = [
         "ffmpeg",
         "-loglevel", "quiet",
@@ -84,7 +81,7 @@ def proxy_video_no_audio(url):
 
         "-f", "mpegts",
         "pipe:1"
-    ]
+         ]
 
     def generate():
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE)
