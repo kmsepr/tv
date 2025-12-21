@@ -258,7 +258,8 @@ input#search{width:60%;padding:8px;border-radius:6px;border:1px solid #0f0;backg
     <strong>{{ ch.title }}</strong>
     <div style="margin-top:6px">
       <a class="btn" href="/watch/{{ group }}/{{ loop.index0 }}" target="_blank">▶️</a>
-      <a class="btn" href="/play-audio/{{ group }}/{{ loop.index0 }}" target="_blank">🎧</a>
+<a class="btn" href="/play-240p/{{ group }}/{{ loop.index0 }}" target="_blank">📉 240p</a>
+<a class="btn" href="/play-audio/{{ group }}/{{ loop.index0 }}" target="_blank">🎧</a>
       <button class="k" onclick='addFav("{{ ch.title|replace('"','&#34;') }}","{{ ch.url }}","{{ ch.logo }}")'>⭐</button>
     </div>
   </div>
@@ -532,8 +533,14 @@ function loadFavs(){
         <strong>${c.title}</strong>
         <div style="margin-top:6px">
           <a class="btn"
-             href="/watch-direct?title=${encodeURIComponent(c.title)}&url=${encodeURIComponent(c.url)}&logo=${encodeURIComponent(c.logo)}"
-             target="_blank">▶ Watch</a>
+   href="/watch-direct?title=${encodeURIComponent(c.title)}&url=${encodeURIComponent(c.url)}&logo=${encodeURIComponent(c.logo)}"
+   target="_blank">▶ Watch</a>
+
+<a class="btn"
+   href="/play-240p-direct?u=${encodeURIComponent(c.url)}"
+   target="_blank">📉 240p</a>
+
+<a class="btn" href="/play-audio/fav/${i}" target="_blank">🎧 Audio</a>
           <a class="btn" href="/play-audio/fav/${i}" target="_blank">🎧 Audio</a>
         </div>
       </div>
@@ -675,6 +682,23 @@ def play_audio_direct():
     return Response(stream_with_context(proxy_audio_only(u)),
                     mimetype="audio/mpeg")
 
+@app.route("/play-240p-direct")
+def play_240p_direct():
+    u = request.args.get("u")
+    if not u:
+        abort(404)
+
+    headers = {
+        "Access-Control-Allow-Origin": "*",
+        "Cache-Control": "no-cache"
+    }
+
+    return Response(
+        stream_with_context(proxy_video_240p(u)),
+        mimetype="video/mp4",
+        headers=headers
+    )
+
 @app.route("/watch-direct")
 def watch_direct():
     title = request.args.get("title", "Channel")
@@ -693,6 +717,73 @@ def watch_direct():
     }
 
     return render_template_string(WATCH_HTML, channel=channel, mime_type=mime)
+
+# ============================================================
+# 240p Low-data video proxy (no audio)
+# ============================================================
+def proxy_video_240p(source_url: str):
+    cmd = [
+        "ffmpeg", "-loglevel", "error",
+        "-i", source_url,
+
+        # video only
+        "-an",
+
+        # scale to 240p (keep aspect ratio)
+        "-vf", "scale=-2:240",
+
+        # low bitrate for data saving
+        "-c:v", "libx264",
+        "-preset", "veryfast",
+        "-tune", "zerolatency",
+        "-b:v", "150k",
+        "-maxrate", "180k",
+        "-bufsize", "300k",
+
+        # output fragmented mp4 for streaming
+        "-f", "mp4",
+        "-movflags", "frag_keyframe+empty_moov",
+        "pipe:1"
+    ]
+
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        while True:
+            data = proc.stdout.read(64 * 1024)
+            if not data:
+                break
+            yield data
+    finally:
+        try:
+            proc.terminate()
+            time.sleep(0.5)
+            if proc.poll() is None:
+                proc.kill()
+        except:
+            pass
+@app.route("/play-240p/<group>/<int:idx>")
+def play_240p(group, idx):
+    if group not in PLAYLISTS:
+        abort(404)
+
+    channels = get_channels(group)
+    if idx < 0 or idx >= len(channels):
+        abort(404)
+
+    ch = channels[idx]
+
+    headers = {
+        "Access-Control-Allow-Origin": "*",
+        "Cache-Control": "no-cache"
+    }
+
+    return Response(
+        stream_with_context(proxy_video_240p(ch["url"])),
+        mimetype="video/mp4",
+        headers=headers
+    )
+
+
 
 # ============================================================
 # Entry
