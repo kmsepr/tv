@@ -161,30 +161,7 @@ def get_channels(name: str):
         logging.error("Load failed %s: %s", name, e)
         return []
 
-# ============================================================
-# Audio-only proxy
-# ============================================================
-def proxy_audio_only(source_url: str):
-    cmd = [
-        "ffmpeg", "-loglevel", "error", "-i", source_url,
-        "-vn", "-ac", "1", "-ar", "44100", "-b:a", "40k",
-        "-f", "mp3", "pipe:1",
-    ]
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    try:
-        while True:
-            data = proc.stdout.read(64 * 1024)
-            if not data:
-                break
-            yield data
-    finally:
-        try:
-            proc.terminate()
-            time.sleep(0.5)
-            if proc.poll() is None:
-                proc.kill()
-        except:
-            pass
+
 
 # ============================================================
 # HTML TEMPLATES
@@ -259,7 +236,6 @@ input#search{width:60%;padding:8px;border-radius:6px;border:1px solid #0f0;backg
     <div style="margin-top:6px">
       <a class="btn" href="/watch/{{ group }}/{{ loop.index0 }}" target="_blank">▶️</a>
 <a class="btn" href="/play-240p/{{ group }}/{{ loop.index0 }}" target="_blank">📉 240p</a>
-<a class="btn" href="/play-audio/{{ group }}/{{ loop.index0 }}" target="_blank">🎧</a>
       <button class="k" onclick='addFav("{{ ch.title|replace('"','&#34;') }}","{{ ch.url }}","{{ ch.logo }}")'>⭐</button>
     </div>
   </div>
@@ -339,7 +315,7 @@ input#q{width:70%;padding:8px;border-radius:6px;border:1px solid #0f0;background
         <strong>{{ r.title }}</strong>
         <div style="margin-top:6px">
           <a class="btn" href="/watch/all/{{ r.index }}" target="_blank">▶ Watch</a>
-          <a class="btn" href="/play-audio/all/{{ r.index }}" target="_blank">🎧 Audio</a>
+         
           <button class="k" onclick='addFav("{{ r.title|replace('"','&#34;') }}","{{ r.url }}","{{ r.logo }}")'>⭐</button>
         </div>
       </div>
@@ -539,8 +515,6 @@ function loadFavs(){
 <a class="btn"
    href="/play-240p-direct?u=${encodeURIComponent(c.url)}"
    target="_blank">📉 240p</a>
-
-<a class="btn" href="/play-audio/fav/${i}" target="_blank">🎧 Audio</a>
           <a class="btn" href="/play-audio/fav/${i}" target="_blank">🎧 Audio</a>
         </div>
       </div>
@@ -638,21 +612,6 @@ def watch_channel(group, idx):
     mime = "application/vnd.apple.mpegurl" if ".m3u8" in url else "video/mp4"
     return render_template_string(WATCH_HTML, channel=ch, mime_type=mime)
 
-@app.route("/play-audio/<group>/<int:idx>")
-def play_channel_audio(group, idx):
-    if group not in PLAYLISTS:
-        abort(404)
-    channels = get_channels(group)
-    if idx < 0 or idx >= len(channels):
-        abort(404)
-    ch = channels[idx]
-
-    def gen():
-        for chunk in proxy_audio_only(ch["url"]):
-            yield chunk
-
-    headers = {"Access-Control-Allow-Origin": "*"}
-    return Response(stream_with_context(gen()), mimetype="audio/mpeg", headers=headers)
 
 @app.route("/watch/fav/<int:index>")
 def watch_fav(index):
@@ -665,22 +624,9 @@ def watch_fav(index):
     return render_template_string(WATCH_HTML, channel=channel, mime_type=mime_type)
 
 
-@app.route("/play-audio/fav/<int:index>")
-def play_audio_fav(index):
-    return """
-    <script>
-    let f = JSON.parse(localStorage.getItem('favs'))[%d];
-    window.location = '/play-audio-direct?u=' + encodeURIComponent(f.url);
-    </script>
-    """ % index
 
-@app.route("/play-audio-direct")
-def play_audio_direct():
-    u = request.args.get("u")
-    if not u:
-        abort(404)
-    return Response(stream_with_context(proxy_audio_only(u)),
-                    mimetype="audio/mpeg")
+
+
 
 @app.route("/play-240p-direct")
 def play_240p_direct():
