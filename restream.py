@@ -623,10 +623,6 @@ def watch_fav(index):
     return render_template_string(WATCH_HTML, channel=channel, mime_type=mime_type)
 
 
-
-
-
-
 @app.route("/play-240p-direct")
 def play_240p_direct():
     u = request.args.get("u")
@@ -640,7 +636,7 @@ def play_240p_direct():
 
     return Response(
         stream_with_context(proxy_video_240p(u)),
-        mimetype="video/mp4",
+        mimetype="video/mp2t",
         headers=headers
     )
 
@@ -671,13 +667,9 @@ def proxy_video_240p(source_url: str):
         "ffmpeg", "-loglevel", "error",
         "-i", source_url,
 
-        # video only
         "-an",
-
-        # scale to 240p (keep aspect ratio)
         "-vf", "scale=-2:240",
 
-        # low bitrate for data saving
         "-c:v", "libx264",
         "-preset", "veryfast",
         "-tune", "zerolatency",
@@ -685,9 +677,8 @@ def proxy_video_240p(source_url: str):
         "-maxrate", "180k",
         "-bufsize", "300k",
 
-        # output fragmented mp4 for streaming
-        "-f", "mp4",
-        "-movflags", "frag_keyframe+empty_moov",
+        # ✅ FIXED FORMAT
+        "-f", "mpegts",
         "pipe:1"
     ]
 
@@ -706,6 +697,7 @@ def proxy_video_240p(source_url: str):
                 proc.kill()
         except:
             pass
+
 @app.route("/play-240p/<group>/<int:idx>")
 def play_240p(group, idx):
     if group not in PLAYLISTS:
@@ -724,7 +716,7 @@ def play_240p(group, idx):
 
     return Response(
         stream_with_context(proxy_video_240p(ch["url"])),
-        mimetype="video/mp4",
+        mimetype="video/mp2t",
         headers=headers
     )
 
@@ -748,7 +740,7 @@ def watch_240p(group, idx):
     return render_template_string(
         WATCH_HTML,
         channel=channel,
-        mime_type="video/mp4"
+        mime_type="video/mp2t"
     )
 
 # ============================================================
