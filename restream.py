@@ -98,9 +98,34 @@ def proxy_video_no_audio(url):
 HOME_HTML = """
 <!doctype html>
 <html>
-<body style="background:#000;color:#0f0;font-family:Arial;font-size:26px;padding:16px">
+<head>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+</head>
+
+<body style="background:#000;color:#0f0;font-family:Arial;font-size:24px;padding:16px">
 
 <h1>📺 IPTV</h1>
+
+<!-- SEARCH BAR -->
+<div style="display:flex;gap:10px;margin:16px 0">
+  <input id="search"
+         placeholder="Search channels..."
+         style="flex:1;padding:18px;font-size:24px;
+                background:#000;color:#0f0;border:3px solid #0f0">
+
+  <button onclick="doSearch()"
+          style="padding:18px 24px;
+                 font-size:26px;
+                 border:3px solid #0f0;
+                 background:#000;color:#0f0">
+    🔍
+  </button>
+</div>
+
+<!-- SEARCH RESULTS -->
+<div id="results"></div>
+
+<hr style="border:2px solid #0f0;margin:20px 0">
 
 <a href="/random" style="display:block;padding:18px;border:3px solid #0f0;margin-bottom:14px">
 🎲 Random
@@ -116,6 +141,76 @@ HOME_HTML = """
 </a>
 {% endfor %}
 
+<script>
+let ALL = [];
+
+function loadAll(){
+  if(ALL.length) return;
+  Promise.all(
+    {{ playlists|tojson }} && Object.keys({{ playlists|tojson }}).map(g =>
+      fetch("/list/"+g).then(r=>r.text())
+    )
+  );
+}
+
+// simple client-side index using embedded data
+{% for g in playlists %}
+{% for c in get_channels(g) %}
+ALL.push({title:"{{c.title|escape}}", url:"{{c.url}}"});
+{% endfor %}
+{% endfor %}
+
+function doSearch(){
+  let q = document.getElementById("search").value.toLowerCase().trim();
+  let out = document.getElementById("results");
+  out.innerHTML = "";
+
+  if(!q) return;
+
+  let res = ALL.filter(c => c.title.toLowerCase().includes(q)).slice(0, 50);
+
+  if(!res.length){
+    out.innerHTML = "<p>No results</p>";
+    return;
+  }
+
+  res.forEach((c,i)=>{
+    out.innerHTML += `
+    <div style="border:3px solid #0f0;padding:16px;margin:14px 0">
+      <div style="font-size:26px;margin-bottom:10px">${i+1}. ${c.title}</div>
+      <a href="/watch-direct?title=${encodeURIComponent(c.title)}&url=${encodeURIComponent(c.url)}"
+         style="display:inline-block;padding:16px 20px;
+                border:3px solid #0f0;font-size:22px">
+        ▶ Watch
+      </a>
+      <button onclick='addFav("${c.title.replace(/"/g,'&quot;')}","${c.url}")'
+              style="padding:16px 20px;
+                     border:3px solid yellow;
+                     background:#000;color:yellow;
+                     font-size:22px;margin-left:10px">
+        ⭐ Fav
+      </button>
+    </div>`;
+  });
+}
+
+function addFav(title,url){
+  let f = JSON.parse(localStorage.getItem('favs')||'[]');
+  if(!f.find(x=>x.url===url)){
+    f.push({title:title,url:url});
+    localStorage.setItem('favs',JSON.stringify(f));
+    alert("Added to favourites");
+  } else {
+    alert("Already added");
+  }
+}
+
+// ENTER triggers search
+document.getElementById("search").addEventListener("keydown", e=>{
+  if(e.key==="Enter") doSearch();
+});
+</script>
+
 </body>
 </html>
 """
@@ -126,6 +221,7 @@ LIST_HTML = """
 <head>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 </head>
+
 <body style="background:#000;color:#0f0;font-family:Arial;font-size:22px;padding:14px">
 
 <h2>{{group|upper}}</h2>
@@ -134,13 +230,28 @@ LIST_HTML = """
 ← Home
 </a>
 
-<input id="search" placeholder="🔍 Search channel..."
-       style="width:100%;padding:16px;font-size:22px;margin:14px 0;
-              background:#000;color:#0f0;border:3px solid #0f0">
+<!-- SEARCH BAR -->
+<div style="display:flex;gap:10px;margin:16px 0">
+  <input id="search"
+         placeholder="Search channel name..."
+         style="flex:1;padding:16px;font-size:22px;
+                background:#000;color:#0f0;border:3px solid #0f0">
+
+  <button onclick="doSearch()"
+          style="padding:16px 22px;
+                 font-size:24px;
+                 border:3px solid #0f0;
+                 background:#000;color:#0f0">
+    🔍
+  </button>
+</div>
 
 <div id="list">
 {% for c in channels %}
-<div class="item" style="border:3px solid #0f0;padding:16px;margin:14px 0">
+<div class="item"
+     data-title="{{c.title|lower}}"
+     style="border:3px solid #0f0;padding:16px;margin:14px 0">
+
   <div style="font-size:24px;margin-bottom:10px">
     {{loop.index}}. {{c.title}}
   </div>
@@ -174,11 +285,24 @@ function addFav(title,url){
   }
 }
 
-document.getElementById("search").addEventListener("input", function(){
-  let q = this.value.toLowerCase();
-  document.querySelectorAll(".item").forEach(el=>{
-    el.style.display = el.innerText.toLowerCase().includes(q) ? "" : "none";
+function doSearch(){
+  let q = document.getElementById("search").value.toLowerCase().trim();
+  let items = document.querySelectorAll(".item");
+
+  items.forEach(el=>{
+    if(!q || el.dataset.title.includes(q)){
+      el.style.display = "";
+    } else {
+      el.style.display = "none";
+    }
   });
+}
+
+// ENTER key triggers search
+document.getElementById("search").addEventListener("keydown", function(e){
+  if(e.key === "Enter"){
+    doSearch();
+  }
 });
 </script>
 
