@@ -76,7 +76,7 @@ def proxy_video_no_audio(url):
 
         # Audio (≈16 kbps)
         "-c:a", "aac",
-        "-b:a", "16k",
+        "-b:a", "12k",
         "-ac", "1",
         "-ar", "16000",
 
