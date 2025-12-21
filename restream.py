@@ -513,7 +513,7 @@ function loadFavs(){
    target="_blank">▶ Watch</a>
 
 <a class="btn"
-   href="/watch-240p?u=${encodeURIComponent(c.url)}"
+   href="/watch-240p-direct?u=${encodeURIComponent(c.url)}"
    target="_blank">📉 240p</a>
         </div>
       </div>
