@@ -166,33 +166,25 @@ def get_channels(name: str):
 # ============================================================
 def proxy_audio_only(source_url: str):
     cmd = [
-            "ffmpeg", "-i", url,
-            "-vn",          # no video
-            "-ac", "1",     # mono
-            "-b:a", "40k",  # 40kbps
-            "-f", "mp3",
-            "pipe:1"
-        ]
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        "ffmpeg", "-loglevel", "error", "-i", source_url,
+        "-vn", "-ac", "1", "-ar", "44100", "-b:a", "40k",
+        "-f", "mp3", "pipe:1",
+    ]
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        while True:
+            data = proc.stdout.read(64 * 1024)
+            if not data:
+                break
+            yield data
+    finally:
         try:
-            # Stream in chunks of 1024 bytes
-            for chunk in iter(lambda: proc.stdout.read(1024), b''):
-                if not chunk:
-                    break
-                yield chunk
-        finally:
             proc.terminate()
-            proc.wait()
-
-    # Return a streaming response
-    return Response(
-        generate(),
-        mimetype="audio/mpeg",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-        }
-    )
+            time.sleep(0.5)
+            if proc.poll() is None:
+                proc.kill()
+        except:
+            pass
 
 # ============================================================
 # HTML TEMPLATES
@@ -255,6 +247,20 @@ input#search{width:60%;padding:8px;border-radius:6px;border:1px solid #0f0;backg
   <button class="k" onclick="clearSearch()">✖</button>
 </div>
 
+<!-- optional small keypad for HMD-style input (on-screen) -->
+<div class="keypad" role="application">
+  <button class="kbtn" onclick="updateSearch('1')">1</button>
+  <button class="kbtn" onclick="updateSearch('2')">2</button>
+  <button class="kbtn" onclick="updateSearch('3')">3</button>
+  <button class="kbtn" onclick="updateSearch('4')">4</button>
+  <button class="kbtn" onclick="updateSearch('5')">5</button>
+  <button class="kbtn" onclick="updateSearch('6')">6</button>
+  <button class="kbtn" onclick="updateSearch('7')">7</button>
+  <button class="kbtn" onclick="updateSearch('8')">8</button>
+  <button class="kbtn" onclick="updateSearch('9')">9</button>
+  <button class="kbtn" onclick="updateSearch('0')">0</button>
+</div>
+
 <div id="channelList" style="margin-top:12px;">
 {% for ch in channels %}
 <div class="card" data-url="{{ ch.url }}" data-title="{{ ch.title }}">
@@ -265,8 +271,8 @@ input#search{width:60%;padding:8px;border-radius:6px;border:1px solid #0f0;backg
   <div style="flex:1">
     <strong>{{ ch.title }}</strong>
     <div style="margin-top:6px">
-      <a class="btn" href="/watch/{{ group }}/{{ loop.index0 }}" target="_blank">▶️</a>
-      <a class="btn" href="/play-audio/{{ group }}/{{ loop.index0 }}" target="_blank">🎧</a>
+      <a class="btn" href="/watch/{{ group }}/{{ loop.index0 }}" target="_blank">▶ Watch</a>
+      <a class="btn" href="/play-audio/{{ group }}/{{ loop.index0 }}" target="_blank">🎧 Audio</a>
       <button class="k" onclick='addFav("{{ ch.title|replace('"','&#34;') }}","{{ ch.url }}","{{ ch.logo }}")'>⭐</button>
     </div>
   </div>
@@ -392,113 +398,18 @@ WATCH_HTML = """<!doctype html>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{{ channel.title }}</title>
 <style>
-body{
-    background:#000;
-    color:#0f0;
-    margin:0;
-    font-family:Arial;
-    padding:10px;
-    text-align:center;
-}
-video{
-    width:100%;
-    height:auto;
-    max-height:85vh;
-    border:2px solid #0f0;
-    margin-top:10px;
-}
-.btn{
-    display:inline-block;
-    padding:8px 14px;
-    border:1px solid #0f0;
-    color:#0f0;
-    border-radius:6px;
-    text-decoration:none;
-    cursor:pointer;
-    margin:6px;
-}
-.btn:hover{
-    background:#0f0;
-    color:#000;
-}
-#urlBox{
-    width:90%;
-    padding:8px;
-    font-size:14px;
-    border-radius:6px;
-    border:1px solid #0f0;
-    background:#111;
-    color:#0f0;
-    margin-top:12px;
-}
-.copy-btn{
-    padding:8px 14px;
-    border:1px solid #0f0;
-    border-radius:6px;
-    color:#0f0;
-    background:#111;
-    margin-left:6px;
-}
-.copy-btn:hover{
-    background:#0f0;
-    color:#000;
-}
+body{background:#000;color:#0f0;margin:0}
+video{width:100%;height:auto;max-height:90vh;border:2px solid #0f0;margin-top:10px}
 </style>
 </head>
 <body>
-
-<h3>{{ channel.title }}</h3>
-
-<!-- Buttons -->
-<div style="margin-top:5px;">
-  <button class="btn" onclick="reloadVideo()">🔄 Reload</button>
-  <button class="btn" style="border-color:yellow;color:yellow;" onclick="addFavWatch()">⭐ Favourite</button>
-</div>
-
-<!-- Copy URL box -->
-<div style="margin-top:15px;">
-  <input id="urlBox" value="{{ channel.url }}" readonly>
-  <button class="copy-btn" onclick="copyURL()">📋 Copy</button>
-</div>
-
-<!-- Video Player -->
+<h3 style="text-align:center">{{ channel.title }}</h3>
 <video id="vid" controls autoplay playsinline>
   <source src="{{ channel.url }}" type="{{ mime_type }}">
 </video>
-
-<script>
-function reloadVideo(){
-    const v = document.getElementById("vid");
-    v.src = v.src;  // simple reload
-    v.play();
-}
-
-function addFavWatch(){
-    let f = JSON.parse(localStorage.getItem('favs') || '[]');
-    const t = "{{ channel.title }}";
-    const u = "{{ channel.url }}";
-    const l = "{{ channel.logo }}";
-
-    if (!f.find(x => x.url === u)) {
-        f.push({title:t, url:u, logo:l});
-        localStorage.setItem('favs', JSON.stringify(f));
-        alert("Added to favourites");
-    } else {
-        alert("Already in favourites");
-    }
-}
-
-function copyURL(){
-    const box = document.getElementById("urlBox");
-    box.select();
-    box.setSelectionRange(0, 99999); // mobile compatibility
-    navigator.clipboard.writeText(box.value);
-    alert("M3U8 URL copied!");
-}
-</script>
-
 </body>
-</html>"""
+</html>
+"""
 
 FAV_HTML = """<!doctype html>
 <html>
