@@ -16,11 +16,46 @@ REFRESH_INTERVAL = 1800
 
 PLAYLISTS = {
     "all": "https://iptv-org.github.io/iptv/index.m3u",
+
+    # Countries
     "india": "https://iptv-org.github.io/iptv/countries/in.m3u",
+    "usa": "https://iptv-org.github.io/iptv/countries/us.m3u",
+    "uk": "https://iptv-org.github.io/iptv/countries/uk.m3u",
+    "uae": "https://iptv-org.github.io/iptv/countries/ae.m3u",
+    "saudi": "https://iptv-org.github.io/iptv/countries/sa.m3u",
+    "pakistan": "https://iptv-org.github.io/iptv/countries/pk.m3u",
+
+    # Categories
     "news": "https://iptv-org.github.io/iptv/categories/news.m3u",
     "sports": "https://iptv-org.github.io/iptv/categories/sports.m3u",
+    "movies": "https://iptv-org.github.io/iptv/categories/movies.m3u",
+    "music": "https://iptv-org.github.io/iptv/categories/music.m3u",
+    "kids": "https://iptv-org.github.io/iptv/categories/kids.m3u",
+    "entertainment": "https://iptv-org.github.io/iptv/categories/entertainment.m3u",
+
+    # Languages (extended list)
+    "english":   "https://iptv-org.github.io/iptv/languages/eng.m3u",
+    "hindi":     "https://iptv-org.github.io/iptv/languages/hin.m3u",
+    "tamil":     "https://iptv-org.github.io/iptv/languages/tam.m3u",
+    "telugu":    "https://iptv-org.github.io/iptv/languages/tel.m3u",
     "malayalam": "https://iptv-org.github.io/iptv/languages/mal.m3u",
-    "english": "https://iptv-org.github.io/iptv/languages/eng.m3u",
+    "kannada":   "https://iptv-org.github.io/iptv/languages/kan.m3u",
+    "marathi":   "https://iptv-org.github.io/iptv/languages/mar.m3u",
+    "gujarati":  "https://iptv-org.github.io/iptv/languages/guj.m3u",
+    "bengali":   "https://iptv-org.github.io/iptv/languages/ben.m3u",
+    "punjabi":   "https://iptv-org.github.io/iptv/languages/pan.m3u",
+
+    # International languages
+    "arabic":  "https://iptv-org.github.io/iptv/languages/ara.m3u",
+    "urdu":    "https://iptv-org.github.io/iptv/languages/urd.m3u",
+    "french":  "https://iptv-org.github.io/iptv/languages/fra.m3u",
+    "spanish": "https://iptv-org.github.io/iptv/languages/spa.m3u",
+    "german":  "https://iptv-org.github.io/iptv/languages/deu.m3u",
+    "turkish": "https://iptv-org.github.io/iptv/languages/tur.m3u",
+    "russian": "https://iptv-org.github.io/iptv/languages/rus.m3u",
+    "chinese": "https://iptv-org.github.io/iptv/languages/zho.m3u",
+    "japanese":"https://iptv-org.github.io/iptv/languages/jpn.m3u",
+    "korean":  "https://iptv-org.github.io/iptv/languages/kor.m3u",
 }
 
 CACHE = {}
@@ -122,104 +157,36 @@ def search():
 # ============================================================
 # HTML
 # ============================================================
-HOME_HTML = """
-<!doctype html>
+HOME_HTML = """<!doctype html>
 <html>
 <head>
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<title>IPTV Restream</title>
+<style>
+body{background:#000;color:#0f0;font-family:Arial;padding:16px}
+a{color:#0f0;text-decoration:none;border:1px solid #0f0;padding:10px;margin:8px;border-radius:8px;display:inline-block}
+a:hover{background:#0f0;color:#000}
+.search-btn{display:inline-block;padding:8px;border:1px solid #0f0;border-radius:8px;margin-left:8px}
+</style>
 </head>
+<body>
+<h2>🌐 IPTV</h2>
 
-<body style="background:#000;color:#0f0;font-family:Arial;font-size:24px;padding:16px">
+<a href="/random" style="background:#0f0;color:#000">🎲 Random Channel</a>
+<a href="/favourites" style="border-color:yellow;color:yellow">⭐ Favourites</a>
 
-<h1>📺 IPTV</h1>
+<form action="/search" method="get" style="display:inline-block;margin-left:8px;">
+  <input id="home-search" name="q" placeholder="Search..." style="padding:8px;border-radius:6px;background:#111;border:1px solid #0f0;color:#0f0">
+  <button class="search-btn" type="submit">🔍</button>
+</form>
 
-<!-- SEARCH BAR -->
-<div style="display:flex;gap:10px;margin:16px 0">
-  <input id="q"
-         placeholder="Search channels..."
-         style="flex:1;padding:18px;font-size:24px;
-                background:#000;color:#0f0;border:3px solid #0f0">
-
-  <button onclick="doSearch()"
-          style="padding:18px 24px;
-                 font-size:26px;
-                 border:3px solid #0f0;
-                 background:#000;color:#0f0">
-    🔍
-  </button>
-</div>
-
-<div id="results"></div>
-
-<hr style="border:2px solid #0f0;margin:20px 0">
-
-<a href="/random" style="display:block;padding:18px;border:3px solid #0f0;margin-bottom:14px">
-🎲 Random
-</a>
-
-<a href="/favourites" style="display:block;padding:18px;border:3px solid yellow;color:yellow;margin-bottom:18px">
-⭐ Favourites
-</a>
-
-{% for k in playlists %}
-<a href="/list/{{k}}" style="display:block;padding:18px;border:3px solid #0f0;margin-bottom:12px">
-{{k|upper}}
-</a>
+<p>Select a category:</p>
+{% for key, url in playlists.items() %}
+<a href="/list/{{ key }}">{{ key|capitalize }}</a>
 {% endfor %}
-
-<script>
-function doSearch(){
-  let q = document.getElementById("q").value.trim();
-  let box = document.getElementById("results");
-  box.innerHTML = "";
-
-  if(!q) return;
-
-  fetch("/search?q="+encodeURIComponent(q))
-    .then(r=>r.json())
-    .then(res=>{
-      if(!res.length){
-        box.innerHTML="<p>No results</p>";
-        return;
-      }
-      res.forEach((c,i)=>{
-        box.innerHTML += `
-        <div style="border:3px solid #0f0;padding:16px;margin:14px 0">
-          <div style="font-size:26px;margin-bottom:10px">${i+1}. ${c.title}</div>
-          <a href="/watch-direct?title=${encodeURIComponent(c.title)}&url=${encodeURIComponent(c.url)}"
-             style="display:inline-block;padding:16px 20px;
-                    border:3px solid #0f0;font-size:22px">
-            ▶ Watch
-          </a>
-          <button onclick='addFav("${c.title.replace(/"/g,'&quot;')}","${c.url}")'
-                  style="padding:16px 20px;
-                         border:3px solid yellow;
-                         background:#000;color:yellow;
-                         font-size:22px;margin-left:10px">
-            ⭐ Fav
-          </button>
-        </div>`;
-      });
-    });
-}
-
-function addFav(title,url){
-  let f = JSON.parse(localStorage.getItem('favs')||'[]');
-  if(!f.find(x=>x.url===url)){
-    f.push({title:title,url:url});
-    localStorage.setItem('favs',JSON.stringify(f));
-    alert("Added");
-  }
-}
-
-document.getElementById("q").addEventListener("keydown", e=>{
-  if(e.key==="Enter") doSearch();
-});
-</script>
-
 </body>
-</html>
-"""
+</html>"""
+
 
 LIST_HTML = """
 <!doctype html>
