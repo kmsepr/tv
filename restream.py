@@ -161,29 +161,119 @@ HOME_HTML = """<!doctype html>
 <html>
 <head>
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>IPTV Restream</title>
+<title>{{ title }}</title>
+
 <style>
-body{background:#000;color:#0f0;font-family:Arial;padding:16px}
-a{color:#0f0;text-decoration:none;border:1px solid #0f0;padding:10px;margin:8px;border-radius:8px;display:inline-block}
-a:hover{background:#0f0;color:#000}
-.search-btn{display:inline-block;padding:8px;border:1px solid #0f0;border-radius:8px;margin-left:8px}
+body{
+    background:#000;
+    color:#0f0;
+    margin:0;
+    font-family:Arial;
+    padding:10px;
+    text-align:center;
+}
+video{
+    width:100%;
+    height:auto;
+    max-height:85vh;
+    border:2px solid #0f0;
+    margin-top:10px;
+}
+.btn{
+    display:inline-block;
+    padding:10px 16px;
+    border:2px solid #0f0;
+    color:#0f0;
+    border-radius:8px;
+    text-decoration:none;
+    cursor:pointer;
+    margin:6px;
+    font-size:16px;
+}
+.btn:hover{
+    background:#0f0;
+    color:#000;
+}
+#urlBox{
+    width:92%;
+    padding:10px;
+    font-size:14px;
+    border-radius:6px;
+    border:2px solid #0f0;
+    background:#111;
+    color:#0f0;
+    margin-top:12px;
+}
+.copy-btn{
+    padding:10px 16px;
+    border:2px solid #0f0;
+    border-radius:6px;
+    color:#0f0;
+    background:#111;
+    margin-top:8px;
+}
+.copy-btn:hover{
+    background:#0f0;
+    color:#000;
+}
 </style>
 </head>
+
 <body>
-<h2>🌐 IPTV</h2>
 
-<a href="/random" style="background:#0f0;color:#000">🎲 Random Channel</a>
-<a href="/favourites" style="border-color:yellow;color:yellow">⭐ Favourites</a>
+<h3>{{ title }}</h3>
 
-<form action="/search" method="get" style="display:inline-block;margin-left:8px;">
-  <input id="home-search" name="q" placeholder="Search..." style="padding:8px;border-radius:6px;background:#111;border:1px solid #0f0;color:#0f0">
-  <button class="search-btn" type="submit">🔍</button>
-</form>
+<!-- ACTION BUTTONS -->
+<div>
+  <button class="btn" onclick="reloadVideo()">🔄 Reload</button>
+  <button class="btn" style="border-color:yellow;color:yellow;" onclick="addFav()">⭐ Favourite</button>
+  <a class="btn" href="/">🏠 Home</a>
+</div>
 
-<p>Select a category:</p>
-{% for key, url in playlists.items() %}
-<a href="/list/{{ key }}">{{ key|capitalize }}</a>
-{% endfor %}
+<!-- STREAM URL -->
+<div>
+  <input id="urlBox" value="{{ stream }}" readonly>
+  <br>
+  <button class="copy-btn" onclick="copyURL()">📋 Copy Stream URL</button>
+</div>
+
+<!-- VIDEO PLAYER -->
+<video id="vid" controls autoplay playsinline>
+  <source src="{{ stream }}" type="video/mp2t">
+  Your browser does not support video playback.
+</video>
+
+<script>
+function reloadVideo(){
+    const v = document.getElementById("vid");
+    v.pause();
+    v.load();
+    v.play();
+}
+
+function addFav(){
+    let f = JSON.parse(localStorage.getItem('favs') || '[]');
+    const t = "{{ title }}";
+    const u = "{{ stream }}";
+
+    if (!f.find(x => x.url === u)) {
+        f.push({title:t, url:u});
+        localStorage.setItem('favs', JSON.stringify(f));
+        alert("Added to favourites");
+    } else {
+        alert("Already in favourites");
+    }
+}
+
+function copyURL(){
+    const box = document.getElementById("urlBox");
+    box.select();
+    box.setSelectionRange(0, 99999); // mobile
+    navigator.clipboard.writeText(box.value);
+    alert("Stream URL copied");
+}
+</script>
+
 </body>
 </html>"""
 
