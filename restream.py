@@ -235,7 +235,7 @@ input#search{width:60%;padding:8px;border-radius:6px;border:1px solid #0f0;backg
     <strong>{{ ch.title }}</strong>
     <div style="margin-top:6px">
       <a class="btn" href="/watch/{{ group }}/{{ loop.index0 }}" target="_blank">▶️</a>
-<a class="btn" href="/play-240p/{{ group }}/{{ loop.index0 }}" target="_blank">📉 240p</a>
+<a class="btn" href="/watch-240p/{{ group }}/{{ loop.index0 }}" target="_blank">📉 240p</a>
       <button class="k" onclick='addFav("{{ ch.title|replace('"','&#34;') }}","{{ ch.url }}","{{ ch.logo }}")'>⭐</button>
     </div>
   </div>
@@ -513,7 +513,7 @@ function loadFavs(){
    target="_blank">▶ Watch</a>
 
 <a class="btn"
-   href="/play-240p-direct?u=${encodeURIComponent(c.url)}"
+   href="/watch-240p?u=${encodeURIComponent(c.url)}"
    target="_blank">📉 240p</a>
         </div>
       </div>
@@ -728,7 +728,28 @@ def play_240p(group, idx):
         headers=headers
     )
 
+@app.route("/watch-240p/<group>/<int:idx>")
+def watch_240p(group, idx):
+    if group not in PLAYLISTS:
+        abort(404)
 
+    channels = get_channels(group)
+    if idx < 0 or idx >= len(channels):
+        abort(404)
+
+    ch = channels[idx]
+
+    channel = {
+        "title": ch["title"] + " (240p)",
+        "url": f"/play-240p/{group}/{idx}",
+        "logo": ch.get("logo", "")
+    }
+
+    return render_template_string(
+        WATCH_HTML,
+        channel=channel,
+        mime_type="video/mp4"
+    )
 
 # ============================================================
 # Entry
