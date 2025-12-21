@@ -58,25 +58,27 @@ def get_channels(name):
 # ============================================================
 def proxy_video_no_audio(url):
 
+    def proxy_video_no_audio(url):
+
     cmd = [
         "ffmpeg",
         "-loglevel", "quiet",
         "-i", url,
 
-        # Video (≈44 kbps)
-        "-vf", "scale=256:144",
-        "-r", "12",
+        # 240p video
+        "-vf", "scale=426:240",
+        "-r", "15",
         "-c:v", "libx264",
         "-preset", "ultrafast",
         "-tune", "zerolatency",
-        "-b:v", "40k",
-        "-maxrate", "40k",
-        "-bufsize", "200k",
-        "-g", "24",
+        "-b:v", "80k",
+        "-maxrate", "80k",
+        "-bufsize", "300k",
+        "-g", "30",
 
-        # Audio (≈12 kbps)
+        # Low bitrate audio
         "-c:a", "aac",
-        "-b:a", "12k",
+        "-b:a", "16k",
         "-ac", "1",
         "-ar", "16000",
 
