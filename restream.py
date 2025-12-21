@@ -57,31 +57,34 @@ def get_channels(name):
 # VIDEO-ONLY TRANSCODER (NO AUDIO, 144p ~40kbps)
 # ============================================================
 def proxy_video_no_audio(url):
+
     cmd = [
         "ffmpeg",
         "-loglevel", "quiet",
         "-i", url,
 
-        # 240p video
-        "-vf", "scale=426:240",
-        "-r", "15",
+        # CLEAR 240p
+        "-vf", "scale=426:240:flags=lanczos",
+        "-r", "18",
         "-c:v", "libx264",
-        "-preset", "ultrafast",
-        "-tune", "zerolatency",
-        "-b:v", "80k",
-        "-maxrate", "80k",
-        "-bufsize", "300k",
-        "-g", "30",
+        "-preset", "veryfast",
+        "-profile:v", "baseline",
+        "-level", "3.0",
+        "-pix_fmt", "yuv420p",
+        "-b:v", "150k",
+        "-maxrate", "170k",
+        "-bufsize", "400k",
+        "-g", "36",
 
-        # Low bitrate audio
+        # Low but clean audio
         "-c:a", "aac",
-        "-b:a", "16k",
+        "-b:a", "24k",
         "-ac", "1",
-        "-ar", "16000",
+        "-ar", "22050",
 
         "-f", "mpegts",
         "pipe:1"
-         ]
+    ]
 
     def generate():
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE)
