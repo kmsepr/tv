@@ -65,6 +65,8 @@ PLAYLISTS = {
     "chinese": "https://iptv-org.github.io/iptv/languages/zho.m3u",
     "japanese":"https://iptv-org.github.io/iptv/languages/jpn.m3u",
     "korean":  "https://iptv-org.github.io/iptv/languages/kor.m3u",
+
+"vietnamese": "https://iptv-org.github.io/iptv/languages/vie.m3u",
 }
 
 CACHE = {}
