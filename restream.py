@@ -33,6 +33,7 @@ PLAYLISTS = {
     "uae": "https://iptv-org.github.io/iptv/countries/ae.m3u",
     "saudi": "https://iptv-org.github.io/iptv/countries/sa.m3u",
     "pakistan": "https://iptv-org.github.io/iptv/countries/pk.m3u",
+    "iran": "https://iptv-org.github.io/iptv/countries/ir.m3u",
 
     # Categories
     "news": "https://iptv-org.github.io/iptv/categories/news.m3u",
